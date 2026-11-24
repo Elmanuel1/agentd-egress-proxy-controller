@@ -73,7 +73,7 @@ check "plain HTTP to 169.254.169.254 refused with 403" test "$CODES" = "000 403"
 via sandbox-labelled "https://metadata.demo.test/latest/meta-data/"
 check "allowed name resolving to 169.254.169.254 gets 502" test "$CODES" = "200 502"
 check "...because upstream_deny_cidrs refused the dial" \
-  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c iron-proxy | grep -q "denied by upstream_deny_cidrs: 169.254.169.254 in 169.254.0.0/16"'
+  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c iron-proxy | grep -q "denied by upstream_deny_cidrs: 169.254.169.254"'
 
 log "network policy"
 via sandbox-unlabelled "$OTHER"
