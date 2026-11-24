@@ -8,6 +8,7 @@ STAND_IN="agentd-ph-crd_Demo01"
 API="https://api.upstream.svc.cluster.local:8443/"
 OTHER="https://other.upstream.svc.cluster.local:8443/"
 BLOCKED="https://blocked.upstream.svc.cluster.local:8443/"
+MISSING="https://missing.upstream.svc.cluster.local:8443/"
 
 failures=0
 check() { # <name> <command...>
@@ -63,6 +64,11 @@ via sandbox-labelled "http://api.upstream.svc.cluster.local:8080/" -H "X-Api-Key
 check "plain HTTP to api.upstream answered" test "$CODES" = "000 200"
 check "stand-in not replaced over plain HTTP" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
 
+log "a credential whose secret cannot be read"
+via sandbox-labelled "$MISSING" -H "X-Api-Key: agentd-ph-crd_Missing01"
+check "missing.upstream answered" test "$CODES" = "200 200"
+check "its stand-in passes unchanged" test "$(header_sha x-api-key)" = "$(sha agentd-ph-crd_Missing01)"
+
 log "host outside the allowlist"
 via sandbox-labelled "$BLOCKED"
 check "blocked.upstream refused with 403 at CONNECT" refused_at_connect
@@ -104,26 +110,31 @@ counts() {
          v: (.asInt | tonumber)}]
     | group_by(.k) | map({(.[0].k): (map(.v) | add)}) | add // {}'
 }
-# One swap on api.upstream; other.upstream and plain HTTP to api.upstream; blocked.upstream and
-# both requests to 169.254.169.254; metadata.demo.test's refused dial. Allowed CONNECTs are not counted.
+# One swap on api.upstream; other.upstream, plain HTTP to api.upstream and missing.upstream;
+# blocked.upstream and both requests to 169.254.169.254; metadata.demo.test's refused dial.
+# Allowed CONNECTs are not counted.
 want_requests='{
   "action=allow,rejected_by=none,swapped=true": 1,
-  "action=allow,rejected_by=none,swapped=false": 2,
+  "action=allow,rejected_by=none,swapped=false": 3,
   "action=reject,rejected_by=allowlist,swapped=false": 3,
   "action=error,rejected_by=none,swapped=false": 1}'
 requests_counted() { REQUESTS="$(counts egress_proxy_requests)"; jq -e --argjson w "$want_requests" '. == $w' <<<"$REQUESTS" >/dev/null; }
 check "egress_proxy_requests matches the requests made (within 60 s)" retry 20 3 requests_counted
 log "egress_proxy_requests: ${REQUESTS:-none}"
-check "egress_proxy_secret_failures counted none" test "$(counts egress_proxy_secret_failures)" = "{}"
-# resource_ids <resourceLogs|resourceMetrics>: every resource carries the workspace and environment.
-resource_ids() {
-  collector_out | jq -se --arg k "$1" '[.[][$k][]? | .resource.attributes
+check "egress_proxy_secret_failures counted missing.upstream once" \
+  test "$(counts egress_proxy_secret_failures)" = '{"":1}'
+logs_carry_ids() {
+  collector_out | jq -se '[.[].resourceLogs[]? | .resource.attributes
       | map({(.key): (.value | to_entries[0].value)}) | add
       | .["agentd.workspace_id"] == "wrk_Demo01" and .["agentd.environment_id"] == "env_Demo01"]
     | length > 0 and all' >/dev/null
 }
-check "log records carry the workspace and environment ids" resource_ids resourceLogs
-check "request metrics carry the workspace and environment ids" resource_ids resourceMetrics
+check "log records carry the workspace and environment ids" logs_carry_ids
+metrics_lack_ids() {
+  collector_out | jq -se '[.[].resourceMetrics[]? | .. | objects | .key? // empty
+      | select(. == "agentd.workspace_id" or . == "agentd.environment_id")] | length == 0' >/dev/null
+}
+check "no workspace or environment id on the metrics" metrics_lack_ids
 no_credential_exported() { ! kubectl -n observability logs deploy/otel-collector | grep -qF -- "$real"; }
 check "the credential value never reaches the Collector" no_credential_exported
 

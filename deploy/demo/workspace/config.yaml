@@ -78,6 +78,8 @@ data:
             # entry made by scripts/fixtures.sh), to prove the deny list holds
             # for allowed hosts.
             - "metadata.demo.test"
+            # Demo: host of a credential whose secret does not exist.
+            - "missing.upstream.svc.cluster.local"
       - name: secrets
         config:
           secrets:
@@ -92,4 +94,18 @@ data:
                 match_headers: []
               rules:
                 - host: "api.upstream.svc.cluster.local"
+                  require_tls: true
+            # Demo: a credential whose secret was never written, so every read
+            # fails and the request goes on without a swap.
+            - source:
+                type: aws_sm
+                secret_id: "agentd/wrk_Demo01/vlt_Demo01/crd_Missing01"
+                json_key: secret_value
+                region: us-east-1
+                ttl: 5m
+              replace:
+                proxy_value: "agentd-ph-crd_Missing01"
+                match_headers: []
+              rules:
+                - host: "missing.upstream.svc.cluster.local"
                   require_tls: true

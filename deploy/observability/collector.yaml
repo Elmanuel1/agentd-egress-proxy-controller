@@ -5,8 +5,11 @@
 # {name, action, duration_ms, annotations} maps. The secrets transform's
 # annotations hold `swapped` and `secret_unavailable` when they apply; a
 # required secret that cannot be read sets `reject_reason: secret_unavailable`.
-# Demo: the file exporter writes OTLP JSON to stdout so the checks read it with
-# kubectl logs. A real deployment exports to its metrics and logs backends.
+# The proxy puts its workspace and environment ids on each record's resource;
+# they stay on the logs and are removed from the metrics.
+# Demo: the file exporter writes OTLP JSON to stdout so the demo checks read it
+# with kubectl logs. A deployment replaces it with an otlp exporter to the
+# backends the infrastructure picks.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -34,6 +37,11 @@ data:
           # as no match, so each flag is true only when an annotation is there.
           - set(log.attributes["swapped"], IsMatch(log.attributes["request_transforms"], "\"swapped\":"))
           - set(log.attributes["secret_unavailable"], IsMatch(log.attributes["request_transforms"], "secret_unavailable"))
+      transform/drop_tenant_ids:
+        error_mode: ignore
+        metric_statements:
+          - delete_key(resource.attributes, "agentd.workspace_id")
+          - delete_key(resource.attributes, "agentd.environment_id")
     connectors:
       count:
         logs:
@@ -64,6 +72,7 @@ data:
           exporters: [count, file]
         metrics:
           receivers: [count]
+          processors: [transform/drop_tenant_ids]
           exporters: [file]
 ---
 apiVersion: apps/v1

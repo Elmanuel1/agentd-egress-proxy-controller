@@ -6,6 +6,7 @@
 #   api      on the allowlist; the credential's host
 #   other    on the allowlist; not the credential's host
 #   blocked  not on the allowlist
+#   missing  on the allowlist; host of a credential whose secret does not exist
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -57,6 +58,7 @@ spec:
     - api.upstream.svc.cluster.local
     - other.upstream.svc.cluster.local
     - blocked.upstream.svc.cluster.local
+    - missing.upstream.svc.cluster.local
   privateKey:
     algorithm: ECDSA
     size: 256
@@ -204,6 +206,20 @@ apiVersion: v1
 kind: Service
 metadata:
   name: blocked
+  namespace: upstream
+spec:
+  clusterIP: None
+  selector:
+    app: echo
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: missing
   namespace: upstream
 spec:
   clusterIP: None

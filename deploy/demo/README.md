@@ -31,8 +31,8 @@ deploy/demo/down.sh
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
 | `cert-manager` | Secret `agentd-root-ca`, ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. |
-| `upstream` | HTTPS echo server behind `api`, `other` and `blocked` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. |
-| `observability` | OpenTelemetry Collector (contrib 0.165.0) and its NetworkPolicy | Receives the proxy's OTLP audit log records on 4318 and counts them into request metrics. Only iron-proxy pods in proxy namespaces reach it. |
+| `upstream` | HTTPS echo server behind `api`, `other`, `blocked` and `missing` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. |
+| `observability` | OpenTelemetry Collector (contrib 0.165.0) and its NetworkPolicy, from `deploy/observability/collector.yaml` | Receives the proxy's OTLP audit log records on 4318 and counts them into request metrics. Only iron-proxy pods in proxy namespaces reach it. |
 
 ## How a request flows
 
@@ -50,8 +50,9 @@ iron-proxy 0.59.0 exports audit log records, not metrics. Each record has `actio
 - `transform/flatten` sets the record attributes `swapped` and `secret_unavailable` to `true` when that annotation is in `request_transforms`.
 - The `count` connector emits `egress_proxy_requests{action, rejected_by, swapped}`, with `rejected_by="none"` when nothing rejected the request. An allowed `CONNECT` only opens a tunnel and is not counted; the request inside it is.
 - It also emits `egress_proxy_secret_failures`, the requests for which a credential could not be read.
+- `transform/drop_tenant_ids` removes the workspace and environment ids from the metrics, so they stay on the logs only.
 
-The demo's `file` exporter writes the records and metrics as OTLP JSON to the Collector's stdout, where the checks read them. A deployment points the Collector at its own backends.
+The demo's `file` exporter writes the records and metrics as OTLP JSON to the Collector's stdout, where the checks read them. A deployment replaces it with an `otlp` exporter to its own backends.
 
 ## What the checks prove
 
@@ -65,8 +66,9 @@ The demo's `file` exporter writes the records and metrics as OTLP JSON to the Co
 - Deleting the intermediate CA Secret makes cert-manager issue a new one that chains to the root.
 - A ConfigMap change reaches the running proxy through the watcher.
 - A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config, not the startup one.
-- `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 2 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts none.
-- The log records and the metrics carry the workspace and environment ids. The credential value never reaches the Collector, and a sandbox cannot connect to it.
+- A credential whose secret cannot be read leaves its stand-in in place and the request goes on.
+- `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 3 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts the 1 request whose secret could not be read.
+- The log records carry the workspace and environment ids, and the metrics carry neither. The credential value never reaches the Collector, and a sandbox cannot connect to it.
 
 ## Not shown here
 
@@ -82,6 +84,8 @@ Each is marked `Demo:` where it appears.
 - The proxy trusts the fake upstream's CA through `SSL_CERT_FILE`. In production it uses the image's system roots.
 - `upstream_deny_cidrs` lets the proxy dial the kind pod subnet `10.244.0.0/16`, where the fake upstream runs. In production all of `10.0.0.0/8` is denied.
 - The allowlist holds `metadata.demo.test`, which CoreDNS resolves to `169.254.169.254`.
+- The allowlist holds `missing.upstream.svc.cluster.local`, the host of a second credential whose secret was never written to Secrets Manager.
+- The Collector's `file` exporter writes to stdout for the checks.
 - The management key Secret is made by `scripts/proxy.sh`. In production the controller makes it.
 
 ## Reload watcher
