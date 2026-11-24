@@ -99,6 +99,9 @@ via sandbox-labelled "https://example.com/" --noproxy '*'
 check "labelled sandbox cannot reach example.com directly" no_connection
 via sandbox-labelled "http://otel-collector.observability.svc.cluster.local:4318/v1/logs" --noproxy '*'
 check "labelled sandbox cannot reach the OpenTelemetry Collector" no_connection
+collector_refused() { ! kubectl -n upstream exec deploy/echo -- python3 -c 'import socket
+socket.create_connection(("otel-collector.observability.svc.cluster.local", 4318), timeout=5)'; }
+check "a pod with open egress, not an iron-proxy pod, cannot reach the Collector" collector_refused
 
 log "the Collector counts the requests above from the proxy's OTLP audit records"
 collector_out() { kubectl -n observability logs deploy/otel-collector | grep '^{"resource' || true; }
