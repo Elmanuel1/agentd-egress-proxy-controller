@@ -27,9 +27,9 @@ deploy/demo/down.sh
 | Directory | Holds | Test-only settings |
 |---|---|---|
 | `workspace/`, `namespaces.yaml`, `root-issuer.yaml`, `sandboxes/egress.yaml` | What the controller and platform apply in production. | None. The hosts and credentials in `workspace/config.yaml` are the test pair's rows, as a real pair's rows would be. |
-| `../observability/` | The Collector, as the platform runs it. | None. The platform supplies ConfigMap `otel-backend` and the policy to reach its backend. |
+| `../observability/` | The Collector, as the platform runs it. | None. The platform supplies ConfigMap `otel-backend` (the backend's address and the one CA trusted for it) and the policy to reach its backend. |
 | `test/workspace/` | Overlay on `workspace/`. | moto's endpoint and dummy keys, the fake upstream's CA, and egress to those two in-cluster stand-ins. |
-| `test/observability/` | Overlay on `../observability/`. | The `otel-backend` ConfigMap and egress policy for the test backend. |
+| `test/observability/` | Overlay on `../observability/`. | Egress to the test backend. `scripts/observability.sh` makes the `otel-backend` ConfigMap with the test backend's address and CA. |
 | `fixtures/`, `sandboxes/pods.yaml`, `scripts/` | Stand-ins and the checks. | All of it. |
 
 ## What runs

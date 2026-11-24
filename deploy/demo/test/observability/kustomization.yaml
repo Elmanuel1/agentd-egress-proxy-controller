@@ -1,6 +1,6 @@
 # The production Collector (deploy/observability), pointed at the test backend
-# (fixtures/otel-backend.yaml). In production the platform supplies the same
-# ConfigMap and NetworkPolicy for its own backend.
+# (fixtures/otel-backend.yaml). In production the platform supplies the
+# otel-backend ConfigMap and this NetworkPolicy for its own backend.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

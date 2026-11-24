@@ -7,10 +7,9 @@
 # required secret that cannot be read sets `reject_reason: secret_unavailable`.
 # The proxy puts its workspace and environment ids on each record's resource;
 # they stay on the logs and are removed from the metrics.
-# The platform names the backend in ConfigMap otel-backend (key `endpoint`, an
-# OTLP/gRPC host:port) and adds the NetworkPolicy that lets the Collector reach
-# it. The backend's certificate is checked against the agentd root and the
-# system roots.
+# The platform names the backend in ConfigMap otel-backend: `endpoint`, an
+# OTLP/gRPC host:port, and `ca.crt`, the one CA the Collector trusts for it. It
+# also adds the NetworkPolicy that lets the Collector reach the backend.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -104,8 +103,7 @@ data:
       otlp_grpc:
         endpoint: ${env:OTEL_BACKEND_ENDPOINT}
         tls:
-          ca_file: /tls/ca.crt
-          include_system_ca_certs_pool: true
+          ca_file: /backend/ca.crt
           min_version: "1.2"
         retry_on_failure:
           enabled: true
@@ -172,10 +170,9 @@ spec:
                 configMapKeyRef:
                   name: otel-backend
                   key: endpoint
+            # 80% of the 512Mi memory limit, as memory_limiter's docs advise.
             - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
+              value: 410MiB
           ports:
             - name: otlp-http
               containerPort: 4318
@@ -209,6 +206,9 @@ spec:
             - name: tls
               mountPath: /tls
               readOnly: true
+            - name: backend
+              mountPath: /backend
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -217,6 +217,12 @@ spec:
           secret:
             secretName: otel-collector-tls
             defaultMode: 0440
+        - name: backend
+          configMap:
+            name: otel-backend
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
