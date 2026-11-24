@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Makes the root CA and its ClusterIssuer. In production the root's certificate
 # and key live in AWS Secrets Manager and External Secrets writes them to the
-# same Secret, cert-manager/agentd-root-ca; CI cannot reach Secrets Manager, so
-# it generates a throwaway root here. The private key never leaves the runner
-# except into that Secret, and the runner's copy is deleted on exit.
+# same Secret, cert-manager/agentd-root-ca; the demo runs without AWS, so it
+# generates a throwaway root here. The private key leaves the machine running
+# the demo only into that Secret, and the local copy is deleted on exit.
 source "$(dirname "$0")/lib.sh"
 
 work="$(mktemp -d)"

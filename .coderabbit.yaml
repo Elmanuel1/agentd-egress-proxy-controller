@@ -30,7 +30,7 @@ reviews:
           multicast, reserved, IPv6 equivalents and 6to4/NAT64 forms). The
           only allowed exception is the kind pod subnet in the demo config.
         - Secret confinement: real credential values exist only in Secrets
-          Manager (moto in CI) and in the proxy's memory. They never
+          Manager (moto in the demo) and in the proxy's memory. They never
           appear in a manifest, ConfigMap, env var, log line or sandbox. A
           sandbox holds stand-ins and the root CA certificate only, never a
           CA private key. The intermediate CA key is mounted only into the
@@ -40,7 +40,7 @@ reviews:
         - Images are pinned by digest. Containers run non-root, read-only
           root filesystem, all capabilities dropped, RuntimeDefault seccomp,
           no service account token unless needed.
-        Demo-only stand-ins (moto, the fake upstream, the CI-made root
+        Demo-only stand-ins (moto, the fake upstream, the demo-made root
         CA, the metadata DNS name) are marked as such; check that each is
         confined to the demo and would not leak into a production shape.
     - path: ".github/workflows/**"
@@ -53,9 +53,9 @@ reviews:
         commit SHA, permissions are least privilege, checkout does not
         persist credentials, downloads are checksum-verified, and no secret
         value is echoed to the log.
-    - path: "deploy/demo/scripts/**"
+    - path: "deploy/demo/**/*.sh"
       instructions: |
-        Bash run in CI. Check `set -euo pipefail` behaviour, quoting, that
+        Bash run in CI and on macOS (bash 3.2, BSD tools, LibreSSL). Check `set -euo pipefail` behaviour, quoting, that
         failures are not swallowed, that secret values are masked and never
         printed, and that temporary key material is removed.
 chat:

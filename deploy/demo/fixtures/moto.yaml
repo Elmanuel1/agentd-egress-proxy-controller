@@ -1,4 +1,4 @@
-# moto stands in for AWS Secrets Manager, which CI cannot reach. The proxy
+# moto stands in for AWS Secrets Manager, since the demo runs without AWS. The proxy
 # reaches it through AWS_ENDPOINT_URL (workspace/proxy.yaml).
 apiVersion: v1
 kind: Namespace

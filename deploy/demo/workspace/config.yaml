@@ -75,7 +75,8 @@ data:
             - "api.upstream.svc.cluster.local"
             - "other.upstream.svc.cluster.local"
             # Demo: an allowed name that resolves to 169.254.169.254 (CoreDNS
-            # entry made in CI), to prove the deny list holds for allowed hosts.
+            # entry made by scripts/fixtures.sh), to prove the deny list holds
+            # for allowed hosts.
             - "metadata.demo.test"
       - name: secrets
         config:

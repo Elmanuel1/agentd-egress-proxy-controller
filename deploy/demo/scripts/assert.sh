@@ -5,7 +5,6 @@ source "$(dirname "$0")/lib.sh"
 
 PROXY="http://proxy-env-demo.ws-demo.svc.cluster.local:8080"
 STAND_IN="agentd-ph-crd_Demo01"
-SECRET_ID="agentd/wrk_Demo01/vlt_Demo01/crd_Demo01"
 API="https://api.upstream.svc.cluster.local:8443/"
 OTHER="https://other.upstream.svc.cluster.local:8443/"
 BLOCKED="https://blocked.upstream.svc.cluster.local:8443/"

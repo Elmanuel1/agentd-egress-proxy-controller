@@ -41,7 +41,7 @@ deploy/demo/down.sh
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
 5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name.
 
-## What the workflow checks
+## What the checks prove
 
 - The stand-in in a header is replaced with the real value on the allowed host.
 - It is not replaced on another allowed host, nor over plain HTTP to the allowed host (`require_tls`).
@@ -76,4 +76,4 @@ iron-proxy reloads its config on `POST /v1/reload` at the management listener, `
 
 ## Scripts
 
-`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. Each one can be rerun on its own against the demo cluster. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
+`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. `install-cert-manager.sh` and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
