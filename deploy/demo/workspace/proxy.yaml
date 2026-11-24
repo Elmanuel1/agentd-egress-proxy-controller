@@ -96,7 +96,8 @@ spec:
             - name: upstream-ca
               mountPath: /etc/upstream-ca
               readOnly: true
-        # Reloads iron-proxy when the mounted config changes. Stock
+        # Reloads iron-proxy once per change of the mounted config, and logs a
+        # failed reload at ERROR with the answer. Stock
         # configmap-reload cannot send the bearer key the management API
         # requires, so this is the same loop in the pinned iron-proxy image,
         # using its busybox sh and wget.
@@ -110,13 +111,13 @@ spec:
               while sleep 5; do
                 now=$(sha256sum "$cfg") || continue
                 [ "$now" = "$last" ] && continue
-                if wget -q -O /dev/null --post-data '' \
+                last=$now
+                if answer=$(wget -O /dev/null --post-data '' \
                   --header "Authorization: Bearer ${IRON_MANAGEMENT_API_KEY}" \
-                  http://127.0.0.1:9092/v1/reload; then
+                  http://127.0.0.1:9092/v1/reload 2>&1); then
                   echo 'level=INFO msg="iron-proxy reloaded"'
-                  last=$now
                 else
-                  echo 'level=ERROR msg="iron-proxy reload failed; retrying"'
+                  echo "level=ERROR msg=\"iron-proxy reload failed\" answer=\"$(echo "$answer" | tr '\n"' "  ")\""
                 fi
               done
           env:

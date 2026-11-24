@@ -56,6 +56,11 @@ via sandbox-labelled "$OTHER" -H "X-Api-Key: ${STAND_IN}"
 check "other.upstream answered" test "$CODES" = "200 200"
 check "stand-in not replaced on other.upstream" test "$(header x-api-key)" = "$STAND_IN"
 
+log "stand-in left alone outside TLS, even on the credential's host (require_tls)"
+via sandbox-labelled "http://api.upstream.svc.cluster.local:8080/" -H "X-Api-Key: ${STAND_IN}"
+check "plain HTTP to api.upstream answered" test "$CODES" = "000 200"
+check "stand-in not replaced over plain HTTP" test "$(header x-api-key)" = "$STAND_IN"
+
 log "host outside the allowlist"
 via sandbox-labelled "$BLOCKED"
 check "blocked.upstream refused with 403 at CONNECT" refused_at_connect
@@ -76,7 +81,18 @@ check "unlabelled sandbox cannot reach the proxy" no_connection
 via sandbox-other-env "$OTHER"
 check "sandbox labelled for another environment cannot reach the proxy" no_connection
 via sandbox-labelled "$API" --noproxy '*'
-check "labelled sandbox cannot bypass the proxy" no_connection
+check "labelled sandbox cannot bypass the proxy to the upstream" no_connection
+via sandbox-labelled "https://example.com/" --noproxy '*'
+check "labelled sandbox cannot reach the internet directly" no_connection
+
+log "autoscaler"
+hpa="$(kubectl -n ws-demo get hpa proxy-env-demo -o json)"
+hpa_shape() {
+  jq -e '.spec.minReplicas == 1 and .spec.maxReplicas == 5
+    and ([.spec.metrics[] | {(.resource.name): .resource.target.averageUtilization}] | add)
+        == {"cpu": 70, "memory": 70}' <<<"$hpa" >/dev/null
+}
+check "HPA scales proxy-env-demo 1 to 5 on CPU and memory at 70%" hpa_shape
 
 log "intermediate CA Secret is restored by cert-manager"
 old_serial="$(kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)"
@@ -103,6 +119,17 @@ blocked_allowed() { via sandbox-labelled "$BLOCKED"; [[ $CODES == "200 200" ]]; 
 check "blocked.upstream allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
 check "watcher logged the reload" \
   bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q "iron-proxy reloaded"'
+
+log "a config the proxy rejects is logged at ERROR and the running config stays"
+kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
+  | jq '.data["proxy.yaml"] += "not_a_field: true\n"' \
+  | kubectl replace -f -
+reload_error_logged() {
+  kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q 'level=ERROR msg="iron-proxy reload failed"'
+}
+check "watcher logged the rejected reload at ERROR (within 180 s)" retry 36 5 reload_error_logged
+via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
+check "proxy still swaps with the last good config" test "$(header x-api-key)" = "$real"
 
 if (( failures > 0 )); then
   fail "${failures} check(s) failed"

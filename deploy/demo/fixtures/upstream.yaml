@@ -73,6 +73,7 @@ data:
     import http.server
     import json
     import ssl
+    import threading
 
 
     class Echo(http.server.BaseHTTPRequestHandler):
@@ -90,6 +91,10 @@ data:
         do_GET = reply
         do_POST = reply
 
+
+    # Plain HTTP on 8080, to show the proxy never swaps outside TLS.
+    plain = http.server.ThreadingHTTPServer(("", 8080), Echo)
+    threading.Thread(target=plain.serve_forever, daemon=True).start()
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -129,6 +134,8 @@ spec:
           ports:
             - name: https
               containerPort: 8443
+            - name: http
+              containerPort: 8080
           readinessProbe:
             tcpSocket:
               port: https

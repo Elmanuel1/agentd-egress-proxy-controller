@@ -24,13 +24,20 @@ Hand-written manifests for what agentd-egress-proxy-controller writes for one or
 ## What the workflow checks
 
 - The stand-in in a header is replaced with the real value on the allowed host.
-- It is not replaced on another allowed host.
+- It is not replaced on another allowed host, nor over plain HTTP to the allowed host (`require_tls`).
 - A host outside the allowlist is refused with `403` at `CONNECT`.
 - `169.254.169.254` is refused, by IP and through an allowed name that resolves to it.
 - An unlabelled sandbox pod, and a pod labelled for another environment, cannot connect to the proxy.
-- A labelled pod can connect, and cannot bypass the proxy.
+- A labelled pod can connect, and cannot bypass the proxy to the upstream or to the internet.
+- The HorizontalPodAutoscaler scales the proxy from 1 to 5 replicas on CPU and memory at 70%.
 - Deleting the intermediate CA Secret makes cert-manager issue a new one that chains to the root.
 - A ConfigMap change reaches the running proxy through the watcher.
+- A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config.
+
+## Not shown here
+
+- Object names are short (`ws-demo`, `proxy-env-demo`). The controller derives them from the ids, as the plan's section 4 sets out.
+- The controller puts a fingerprint of the management-key Secret and the intermediate CA Secret in the pod template's annotations, so a change to either rolls the proxy pods. These manifests carry no fingerprint, so after the CA restore check the running proxy keeps signing with the old intermediate, which still chains to the root.
 
 ## Demo-only stand-ins
 
@@ -45,7 +52,7 @@ Each is marked `Demo:` where it appears.
 
 ## Reload watcher
 
-iron-proxy reloads its config on `POST /v1/reload` at the management listener, `127.0.0.1:9092`, with `Authorization: Bearer <IRON_MANAGEMENT_API_KEY>`. Stock `configmap-reload` has no flag for a request header, so the watcher is a shell loop in the same pinned iron-proxy image. It hashes the mounted config every 5 seconds and posts a reload when the hash changes, retrying until the reload succeeds.
+iron-proxy reloads its config on `POST /v1/reload` at the management listener, `127.0.0.1:9092`, with `Authorization: Bearer <IRON_MANAGEMENT_API_KEY>`. Stock `configmap-reload` has no flag for a request header, so the watcher is a shell loop in the same pinned iron-proxy image. It hashes the mounted config every 5 seconds and posts one reload per change. A failed reload is logged at `ERROR` with the proxy's answer; the proxy keeps its running config.
 
 ## Scripts
 
