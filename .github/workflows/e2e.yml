@@ -18,36 +18,20 @@ jobs:
     name: egress proxy demo on kind
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      CERT_MANAGER_VERSION: v1.21.3
-      CERT_MANAGER_SHA256: c04a51295adda2b1a775146751f973e787190778c7f35180861d9678876e5c74
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Create kind cluster
+      - name: Install kind
         uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
         with:
           version: v0.33.0
-          node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
-          cluster_name: epc-demo
-          config: deploy/demo/kind.yaml
+          install_only: true
 
-      - name: Install cert-manager
-        run: deploy/demo/scripts/install-cert-manager.sh
-
-      - name: Root CA and ClusterIssuer (stand-in for Secrets Manager and External Secrets)
-        run: deploy/demo/scripts/root-ca.sh
-
-      - name: Fixtures (moto, fake upstream, metadata DNS name)
-        run: deploy/demo/scripts/fixtures.sh
-
-      - name: Workspace proxy and sandboxes
-        run: deploy/demo/scripts/proxy.sh
-
-      - name: Assertions
-        run: deploy/demo/scripts/assert.sh
+      # The same script runs the demo on a laptop (deploy/demo/README.md).
+      - name: Build the demo on kind and run the checks
+        run: deploy/demo/up.sh
 
       - name: Cluster state
         if: failure()

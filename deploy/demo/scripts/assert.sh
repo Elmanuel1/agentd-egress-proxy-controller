@@ -17,7 +17,8 @@ check() { # <name> <command...>
   if "$@"; then
     printf 'PASS %s\n' "$name"
   else
-    printf '::error::FAIL %s (codes="%s" curl exit=%s)\n' "$name" "${CODES:-}" "${RC:-}"
+    if ci; then printf '::error::'; fi
+    printf 'FAIL %s (codes="%s" curl exit=%s)\n' "$name" "${CODES:-}" "${RC:-}"
     failures=$((failures + 1))
   fi
 }
@@ -32,7 +33,7 @@ via() {
   RC=0
   out="$(kubectl -n sandboxes exec "$pod" -- curl -sS --connect-timeout 5 --max-time 20 \
     --proxy "$PROXY" --cacert /etc/agentd-ca/ca.crt \
-    -w '\n%{http_connect} %{http_code}' "$@" "$url")" || RC=$?
+    -w '\n%{http_connect} %{http_code}' ${@+"$@"} "$url")" || RC=$?
   CODES="$(tail -n 1 <<<"$out")"
   BODY="$(sed '$d' <<<"$out")"
 }
@@ -44,7 +45,7 @@ no_connection() { [[ $CODES == "000 000" ]] && (( RC == 7 || RC == 28 )); }
 real="$(kubectl -n moto exec deploy/moto -- python3 -c "$(cat "${DEMO_DIR}/scripts/secrets-manager.py")" get "$SECRET_ID" \
   | jq -r .secret_value)"
 [[ -n $real ]] || fail "could not read the credential value back from moto"
-echo "::add-mask::${real}"
+mask "$real"
 
 log "stand-in swapped for the real value on the credential's host"
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
@@ -108,7 +109,7 @@ check "restored intermediate is newly issued" \
 check "restored intermediate chains to the root" \
   openssl verify -CAfile "${work}/root.crt" "${work}/intermediate.crt"
 check "restored intermediate is a CA" \
-  bash -c "openssl x509 -noout -ext basicConstraints -in '${work}/intermediate.crt' | grep -q 'CA:TRUE'"
+  bash -c "openssl x509 -noout -text -in '${work}/intermediate.crt' | grep -q 'CA:TRUE'"
 
 log "a config change reaches the running proxy through the watcher"
 kubectl -n ws-demo get configmap proxy-env-demo-config -o json \

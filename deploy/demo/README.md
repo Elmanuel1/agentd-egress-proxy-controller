@@ -1,6 +1,26 @@
 # Egress proxy demo on kind
 
-Hand-written manifests for what agentd-egress-proxy-controller writes for one organization (`org_Demo01`), one workspace (`wrk_Demo01`) and one cloud environment (`env_Demo01`). The `e2e` workflow (`.github/workflows/e2e.yml`) builds them on kind and checks the design end to end. It runs in CI only.
+Hand-written manifests for what agentd-egress-proxy-controller writes for one organization (`org_Demo01`), one workspace (`wrk_Demo01`) and one cloud environment (`env_Demo01`). `up.sh` builds them on a local kind cluster and checks the design end to end. The `e2e` workflow (`.github/workflows/e2e.yml`) runs the same script.
+
+## Run it
+
+Needs Docker with about 4 GB of memory free, kind, kubectl, openssl, jq and curl. It works on macOS (Apple silicon or Intel) and Linux.
+
+```bash
+deploy/demo/up.sh
+```
+
+`up.sh` creates the kind cluster `epc-demo`, installs everything below and runs the checks, in about five minutes. It writes the cluster's kubeconfig to `~/.cache/epc-demo/kubeconfig` (or `$EPC_DEMO_KUBECONFIG`) and never changes your current kubectl context. To look around afterwards:
+
+```bash
+export KUBECONFIG=~/.cache/epc-demo/kubeconfig
+```
+
+Delete the cluster with:
+
+```bash
+deploy/demo/down.sh
+```
 
 ## What runs
 
@@ -56,4 +76,4 @@ iron-proxy reloads its config on `POST /v1/reload` at the management listener, `
 
 ## Scripts
 
-Run in this order by the workflow: `install-cert-manager.sh`, `root-ca.sh`, `fixtures.sh`, `proxy.sh`, `assert.sh`. `dump.sh` prints cluster state when a step fails, without Secret data.
+`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. Each one can be rerun on its own against the demo cluster. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.

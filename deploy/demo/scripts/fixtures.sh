@@ -15,7 +15,7 @@ kubectl -n moto rollout status deploy/moto --timeout=180s
 
 log "credential value in Secrets Manager, shaped as agentd stores it"
 value="real-$(openssl rand -hex 16)"
-echo "::add-mask::${value}"
+mask "$value"
 printf '{"secret_value":"%s"}' "$value" \
   | kubectl -n moto exec -i deploy/moto -- python3 -c "$(cat "${DEMO_DIR}/scripts/secrets-manager.py")" create "$SECRET_ID"
 

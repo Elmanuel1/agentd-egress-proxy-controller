@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # Installs the pinned cert-manager release after checking its checksum.
-# Needs CERT_MANAGER_VERSION and CERT_MANAGER_SHA256.
 source "$(dirname "$0")/lib.sh"
-
-: "${CERT_MANAGER_VERSION:?}" "${CERT_MANAGER_SHA256:?}"
 
 manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
@@ -11,7 +8,7 @@ trap 'rm -f "$manifest"' EXIT
 log "cert-manager ${CERT_MANAGER_VERSION}"
 curl -fsSL --retry 3 -o "$manifest" \
   "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
-echo "${CERT_MANAGER_SHA256}  ${manifest}" | sha256sum -c -
+echo "${CERT_MANAGER_SHA256}  ${manifest}" | shasum -a 256 -c -
 
 kubectl apply -f "$manifest"
 for d in cert-manager cert-manager-cainjector cert-manager-webhook; do
