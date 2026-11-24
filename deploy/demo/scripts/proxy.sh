@@ -6,7 +6,10 @@ source "$(dirname "$0")/lib.sh"
 log "management key (the controller makes one per workspace with crypto/rand)"
 key_dir="$(mktemp -d)"
 trap 'rm -rf "$key_dir"' EXIT
-(umask 077 && printf '%s' "$(openssl rand -hex 32)" >"${key_dir}/api-key")
+key="$(openssl rand -hex 32)"
+(( ${#key} == 64 )) || fail "openssl rand gave no management key"
+(umask 077 && printf '%s' "$key" >"${key_dir}/api-key")
+unset key
 kubectl -n ws-demo create secret generic iron-proxy-management --from-file=api-key="${key_dir}/api-key"
 
 log "workspace identity and intermediate CA"

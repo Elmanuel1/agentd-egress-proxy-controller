@@ -1,6 +1,7 @@
 # Fake HTTPS upstream for the e2e test. It answers every request with the Host
-# and request headers it received, as JSON, so the test can see what the proxy
-# forwarded. Three headless Services name the same pod; headless so DNS gives
+# and the SHA-256 of each request header value it received, as JSON, so the
+# test can see what the proxy forwarded while no credential value travels back
+# to the sandbox. Three headless Services name the same pod; headless so DNS gives
 # the pod address (10.244.0.0/16) and the proxy dials the pod directly.
 #   api      on the allowlist; the credential's host
 #   other    on the allowlist; not the credential's host
@@ -70,6 +71,7 @@ metadata:
   namespace: upstream
 data:
   echo.py: |
+    import hashlib
     import http.server
     import json
     import ssl
@@ -80,7 +82,10 @@ data:
         def reply(self):
             body = json.dumps({
                 "host": self.headers.get("Host"),
-                "headers": {k.lower(): v for k, v in self.headers.items()},
+                "header_sha256": {
+                    k.lower(): hashlib.sha256(v.encode()).hexdigest()
+                    for k, v in self.headers.items()
+                },
             }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

@@ -37,7 +37,9 @@ via() {
   BODY="$(sed '$d' <<<"$out")"
 }
 
-header() { jq -r --arg h "$1" '.headers[$h] // empty' <<<"$BODY"; }
+# The upstream returns each header's SHA-256, never its value.
+header_sha() { jq -r --arg h "$1" '.header_sha256[$h] // empty' <<<"$BODY"; }
+sha() { printf '%s' "$1" | shasum -a 256 | cut -d ' ' -f 1; }
 refused_at_connect() { [[ $CODES == 403\ * ]] && (( RC != 0 )); }
 no_connection() { [[ $CODES == "000 000" ]] && (( RC == 7 || RC == 28 )); }
 
@@ -49,17 +51,17 @@ mask "$real"
 log "stand-in swapped for the real value on the credential's host"
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
 check "labelled sandbox connects through its proxy" test "$CODES" = "200 200"
-check "stand-in replaced on api.upstream" test "$(header x-api-key)" = "$real"
+check "stand-in replaced on api.upstream" test "$(header_sha x-api-key)" = "$(sha "$real")"
 
 log "stand-in left alone on another allowed host"
 via sandbox-labelled "$OTHER" -H "X-Api-Key: ${STAND_IN}"
 check "other.upstream answered" test "$CODES" = "200 200"
-check "stand-in not replaced on other.upstream" test "$(header x-api-key)" = "$STAND_IN"
+check "stand-in not replaced on other.upstream" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
 
 log "stand-in left alone outside TLS, even on the credential's host (require_tls)"
 via sandbox-labelled "http://api.upstream.svc.cluster.local:8080/" -H "X-Api-Key: ${STAND_IN}"
 check "plain HTTP to api.upstream answered" test "$CODES" = "000 200"
-check "stand-in not replaced over plain HTTP" test "$(header x-api-key)" = "$STAND_IN"
+check "stand-in not replaced over plain HTTP" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
 
 log "host outside the allowlist"
 via sandbox-labelled "$BLOCKED"
@@ -82,8 +84,13 @@ via sandbox-other-env "$OTHER"
 check "sandbox labelled for another environment cannot reach the proxy" no_connection
 via sandbox-labelled "$API" --noproxy '*'
 check "labelled sandbox cannot bypass the proxy to the upstream" no_connection
+internet_reachable() {
+  kubectl -n upstream exec deploy/echo -- python3 -c \
+    'import urllib.request; urllib.request.urlopen("https://example.com/", timeout=10)'
+}
+check "control: the cluster reaches example.com from outside the sandbox policy" internet_reachable
 via sandbox-labelled "https://example.com/" --noproxy '*'
-check "labelled sandbox cannot reach the internet directly" no_connection
+check "labelled sandbox cannot reach example.com directly" no_connection
 
 log "autoscaler"
 hpa="$(kubectl -n ws-demo get hpa proxy-env-demo -o json)"
@@ -133,7 +140,9 @@ sleep 10
 check "watcher tried the rejected config exactly once" \
   test "$(watcher_lines 'level=ERROR msg="iron-proxy reload failed"')" = 1
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
-check "proxy still swaps with the last good config" test "$(header x-api-key)" = "$real"
+check "proxy still swaps with the last good config" test "$(header_sha x-api-key)" = "$(sha "$real")"
+via sandbox-labelled "$BLOCKED"
+check "last good config, not the startup one, still serves blocked.upstream" test "$CODES" = "200 200"
 
 if (( failures > 0 )); then
   fail "${failures} check(s) failed"

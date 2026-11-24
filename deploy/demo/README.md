@@ -31,7 +31,7 @@ deploy/demo/down.sh
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
 | `cert-manager` | Secret `agentd-root-ca`, ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. |
-| `upstream` | HTTPS echo server behind `api`, `other` and `blocked` | Fake upstream that returns the headers it received. |
+| `upstream` | HTTPS echo server behind `api`, `other` and `blocked` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. |
 
 ## How a request flows
 
@@ -48,11 +48,11 @@ deploy/demo/down.sh
 - A host outside the allowlist is refused with `403` at `CONNECT`.
 - `169.254.169.254` is refused, by IP and through an allowed name that resolves to it.
 - An unlabelled sandbox pod, and a pod labelled for another environment, cannot connect to the proxy.
-- A labelled pod can connect, and cannot bypass the proxy to the upstream or to the internet.
+- A labelled pod can connect, and cannot bypass the proxy to the upstream or to the internet (checked against a control request that does reach the internet from outside the sandbox policy).
 - The HorizontalPodAutoscaler scales the proxy from 1 to 5 replicas on CPU and memory at 70%.
 - Deleting the intermediate CA Secret makes cert-manager issue a new one that chains to the root.
 - A ConfigMap change reaches the running proxy through the watcher.
-- A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config.
+- A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config, not the startup one.
 
 ## Not shown here
 
