@@ -96,9 +96,7 @@ spec:
             - name: upstream-ca
               mountPath: /etc/upstream-ca
               readOnly: true
-        # Reloads iron-proxy once per change of the mounted config, and logs a
-        # failed reload at ERROR with the answer. Stock
-        # configmap-reload cannot send the bearer key the management API
+        # Stock configmap-reload cannot send the bearer key the management API
         # requires, so this is the same loop in the pinned iron-proxy image,
         # using its busybox sh and wget.
         - name: config-reload

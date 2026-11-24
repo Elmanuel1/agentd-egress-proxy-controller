@@ -117,8 +117,9 @@ kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
   | kubectl replace -f -
 blocked_allowed() { via sandbox-labelled "$BLOCKED"; [[ $CODES == "200 200" ]]; }
 check "blocked.upstream allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
-check "watcher logged the reload" \
-  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q "iron-proxy reloaded"'
+watcher_lines() { kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -c "$1" || true; }
+sleep 10 # two more watcher polls, so a repeated reload would show
+check "watcher reloaded exactly once for the change" test "$(watcher_lines 'iron-proxy reloaded')" = 1
 
 log "a config the proxy rejects is logged at ERROR and the running config stays"
 kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
@@ -128,6 +129,9 @@ reload_error_logged() {
   kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q 'level=ERROR msg="iron-proxy reload failed"'
 }
 check "watcher logged the rejected reload at ERROR (within 180 s)" retry 36 5 reload_error_logged
+sleep 10
+check "watcher tried the rejected config exactly once" \
+  test "$(watcher_lines 'level=ERROR msg="iron-proxy reload failed"')" = 1
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
 check "proxy still swaps with the last good config" test "$(header x-api-key)" = "$real"
 
