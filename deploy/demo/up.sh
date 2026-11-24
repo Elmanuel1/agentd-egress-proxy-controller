@@ -29,6 +29,7 @@ kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" \
 phase "cert-manager" install-cert-manager.sh
 phase "root CA and ClusterIssuer (stand-in for Secrets Manager and External Secrets)" root-ca.sh
 phase "fixtures (moto, fake upstream, metadata DNS name)" fixtures.sh
+phase "OpenTelemetry Collector" observability.sh
 phase "workspace proxy and sandboxes" proxy.sh
 phase "assertions" assert.sh
 

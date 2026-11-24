@@ -51,6 +51,10 @@ spec:
                 secretKeyRef:
                   name: iron-proxy-management
                   key: api-key
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability:4318
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: agentd.workspace_id=wrk_Demo01,agentd.environment_id=env_Demo01
             # Demo: moto stands in for Secrets Manager. It accepts any
             # key, so these are not secrets. Production sets none of these and
             # gets AWS credentials from EKS Pod Identity.

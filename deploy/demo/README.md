@@ -32,6 +32,7 @@ deploy/demo/down.sh
 | `cert-manager` | Secret `agentd-root-ca`, ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. |
 | `upstream` | HTTPS echo server behind `api`, `other` and `blocked` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. |
+| `observability` | OpenTelemetry Collector (contrib 0.165.0) and its NetworkPolicy | Receives the proxy's OTLP audit log records on 4318 and counts them into request metrics. Only iron-proxy pods in proxy namespaces reach it. |
 
 ## How a request flows
 
@@ -40,6 +41,17 @@ deploy/demo/down.sh
 3. The proxy terminates TLS with a leaf certificate signed by the workspace intermediate. The sandbox trusts only the root, and the proxy sends the intermediate with each leaf.
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
 5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name.
+6. The proxy sends one OTLP log record per request to the Collector. `OTEL_RESOURCE_ATTRIBUTES` puts `agentd.workspace_id` and `agentd.environment_id` on every record.
+
+## Metrics
+
+iron-proxy 0.59.0 exports audit log records, not metrics. Each record has `action` (`allow`, `reject` or `error`), `rejected_by` on a reject, `method`, and `request_transforms`: a list of `{name, action, duration_ms, annotations}`. The `secrets` transform's annotations hold `swapped` after a swap and `secret_unavailable` when a credential could not be read. The Collector turns them into metrics:
+
+- `transform/flatten` sets the record attributes `swapped` and `secret_unavailable` to `true` when that annotation is in `request_transforms`.
+- The `count` connector emits `egress_proxy_requests{action, rejected_by, swapped}`, with `rejected_by="none"` when nothing rejected the request. An allowed `CONNECT` only opens a tunnel and is not counted; the request inside it is.
+- It also emits `egress_proxy_secret_failures`, the requests for which a credential could not be read.
+
+The demo's `file` exporter writes the records and metrics as OTLP JSON to the Collector's stdout, where the checks read them. A deployment points the Collector at its own backends.
 
 ## What the checks prove
 
@@ -53,6 +65,8 @@ deploy/demo/down.sh
 - Deleting the intermediate CA Secret makes cert-manager issue a new one that chains to the root.
 - A ConfigMap change reaches the running proxy through the watcher.
 - A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config, not the startup one.
+- `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 2 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts none.
+- The log records and the metrics carry the workspace and environment ids. The credential value never reaches the Collector, and a sandbox cannot connect to it.
 
 ## Not shown here
 
@@ -76,4 +90,4 @@ iron-proxy reloads its config on `POST /v1/reload` at the management listener, `
 
 ## Scripts
 
-`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. `install-cert-manager.sh` and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
+`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/observability.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. `install-cert-manager.sh` and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
