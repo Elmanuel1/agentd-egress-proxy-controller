@@ -1,0 +1,10 @@
+# Issues every workspace's intermediate CA. Its Secret, cert-manager/agentd-root-ca,
+# is filled by External Secrets from AWS Secrets Manager in production; CI makes
+# it with openssl (scripts/root-ca.sh) because it cannot reach Secrets Manager.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: agentd-root-ca
+spec:
+  ca:
+    secretName: agentd-root-ca

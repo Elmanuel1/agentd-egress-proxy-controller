@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# The e2e assertions. Each check prints PASS or FAIL; the script runs them all
+# and exits non-zero if any failed.
+source "$(dirname "$0")/lib.sh"
+
+PROXY="http://proxy-env-demo.ws-demo.svc.cluster.local:8080"
+STAND_IN="agentd-ph-crd_Demo01"
+SECRET_ID="agentd/wrk_Demo01/vlt_Demo01/crd_Demo01"
+API="https://api.upstream.svc.cluster.local:8443/"
+OTHER="https://other.upstream.svc.cluster.local:8443/"
+BLOCKED="https://blocked.upstream.svc.cluster.local:8443/"
+
+failures=0
+check() { # <name> <command...>
+  local name=$1
+  shift
+  if "$@"; then
+    printf 'PASS %s\n' "$name"
+  else
+    printf '::error::FAIL %s (codes="%s" curl exit=%s)\n' "$name" "${CODES:-}" "${RC:-}"
+    failures=$((failures + 1))
+  fi
+}
+
+# via <pod> <url> [curl args...]
+# Requests <url> from a sandbox pod through the proxy. Sets BODY, CODES
+# ("<CONNECT status> <HTTP status>", 000 when there was none) and RC (curl's
+# exit code).
+via() {
+  local pod=$1 url=$2 out
+  shift 2
+  RC=0
+  out="$(kubectl -n sandboxes exec "$pod" -- curl -sS --connect-timeout 5 --max-time 20 \
+    --proxy "$PROXY" --cacert /etc/agentd-ca/ca.crt \
+    -w '\n%{http_connect} %{http_code}' "$@" "$url")" || RC=$?
+  CODES="$(tail -n 1 <<<"$out")"
+  BODY="$(sed '$d' <<<"$out")"
+}
+
+header() { jq -r --arg h "$1" '.headers[$h] // empty' <<<"$BODY"; }
+refused_at_connect() { [[ $CODES == 403\ * ]] && (( RC != 0 )); }
+no_connection() { [[ $CODES == "000 000" ]] && (( RC == 7 || RC == 28 )); }
+
+real="$(kubectl -n localstack exec deploy/localstack -- awslocal secretsmanager get-secret-value \
+  --region us-east-1 --secret-id "$SECRET_ID" --query SecretString --output text | jq -r .secret_value)"
+[[ -n $real ]] || fail "could not read the credential value back from LocalStack"
+echo "::add-mask::${real}"
+
+log "stand-in swapped for the real value on the credential's host"
+via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
+check "labelled sandbox connects through its proxy" test "$CODES" = "200 200"
+check "stand-in replaced on api.upstream" test "$(header x-api-key)" = "$real"
+
+log "stand-in left alone on another allowed host"
+via sandbox-labelled "$OTHER" -H "X-Api-Key: ${STAND_IN}"
+check "other.upstream answered" test "$CODES" = "200 200"
+check "stand-in not replaced on other.upstream" test "$(header x-api-key)" = "$STAND_IN"
+
+log "host outside the allowlist"
+via sandbox-labelled "$BLOCKED"
+check "blocked.upstream refused with 403 at CONNECT" refused_at_connect
+
+log "cloud metadata address"
+via sandbox-labelled "https://169.254.169.254/latest/meta-data/"
+check "CONNECT to 169.254.169.254 refused with 403" refused_at_connect
+via sandbox-labelled "http://169.254.169.254/latest/meta-data/"
+check "plain HTTP to 169.254.169.254 refused with 403" test "$CODES" = "000 403"
+via sandbox-labelled "https://metadata.demo.test/latest/meta-data/"
+check "allowed name resolving to 169.254.169.254 gets 502" test "$CODES" = "200 502"
+check "...because upstream_deny_cidrs refused the dial" \
+  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c iron-proxy | grep -q "denied by upstream_deny_cidrs: 169.254.169.254 in 169.254.0.0/16"'
+
+log "network policy"
+via sandbox-unlabelled "$OTHER"
+check "unlabelled sandbox cannot reach the proxy" no_connection
+via sandbox-other-env "$OTHER"
+check "sandbox labelled for another environment cannot reach the proxy" no_connection
+via sandbox-labelled "$API" --noproxy '*'
+check "labelled sandbox cannot bypass the proxy" no_connection
+
+log "intermediate CA Secret is restored by cert-manager"
+old_serial="$(kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)"
+kubectl -n ws-demo delete secret iron-proxy-ca
+restored() { kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.key}' 2>/dev/null | grep -q .; }
+check "iron-proxy-ca Secret recreated within 60 s" retry 30 2 restored
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+kubectl -n sandboxes get configmap agentd-root-ca -o jsonpath='{.data.ca\.crt}' >"${work}/root.crt"
+kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.crt}' | base64 -d >"${work}/intermediate.crt"
+check "restored intermediate is newly issued" \
+  test "$(openssl x509 -noout -serial -in "${work}/intermediate.crt")" != "$old_serial"
+check "restored intermediate chains to the root" \
+  openssl verify -CAfile "${work}/root.crt" "${work}/intermediate.crt"
+check "restored intermediate is a CA" \
+  bash -c "openssl x509 -noout -ext basicConstraints -in '${work}/intermediate.crt' | grep -q 'CA:TRUE'"
+
+log "a config change reaches the running proxy through the watcher"
+kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
+  | jq '.data["proxy.yaml"] |= sub("(?<i> *)- \"other.upstream.svc.cluster.local\"\n";
+      "\(.i)- \"other.upstream.svc.cluster.local\"\n\(.i)- \"blocked.upstream.svc.cluster.local\"\n")' \
+  | kubectl replace -f -
+blocked_allowed() { via sandbox-labelled "$BLOCKED"; [[ $CODES == "200 200" ]]; }
+check "blocked.upstream allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
+check "watcher logged the reload" \
+  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q "iron-proxy reloaded"'
+
+if (( failures > 0 )); then
+  fail "${failures} check(s) failed"
+fi
+log "all checks passed"

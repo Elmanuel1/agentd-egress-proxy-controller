@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: org-demo
+  labels:
+    agentd.dev/organization: org_Demo01
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ws-demo
+  labels:
+    agentd.dev/organization: org_Demo01
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/proxy-namespace: "true"
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandboxes
+  labels:
+    pod-security.kubernetes.io/enforce: restricted

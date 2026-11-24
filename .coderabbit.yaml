@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "deploy/**"
+      instructions: |
+        These manifests are what agentd-egress-proxy-controller writes for one
+        (workspace, cloud environment) pair: a stock iron-proxy that swaps a
+        stand-in `agentd-ph-<credential id>` for a real secret from AWS Secrets
+        Manager, on allowed hosts only. Review against these invariants and
+        flag any change that weakens one:
+        - Default-deny egress for sandboxes: a sandbox pod may reach only
+          cluster DNS and TCP 8080 in a namespace labelled
+          `agentd.dev/proxy-namespace: "true"`. Nothing else, no direct internet.
+        - Proxy ingress: only pods in the `sandboxes` namespace carrying this
+          proxy's `agentd.dev/workspace` and `agentd.dev/environment` labels,
+          on TCP 8080. Metrics and management ports are never admitted. An
+          unlabelled pod reaches no proxy.
+        - Upstream IP deny: `upstream_deny_cidrs` keeps the full internal list
+          (private, shared, loopback, link-local including 169.254.169.254,
+          multicast, reserved, IPv6 equivalents and 6to4/NAT64 forms). The
+          only allowed exception is the kind pod subnet in the demo config.
+        - Secret confinement: real credential values exist only in Secrets
+          Manager (LocalStack in CI) and in the proxy's memory. They never
+          appear in a manifest, ConfigMap, env var, log line or sandbox. A
+          sandbox holds stand-ins and the root CA certificate only, never a
+          CA private key. The intermediate CA key is mounted only into the
+          proxy container. Every secrets rule sets `require_tls: true`.
+        - The management API listens on 127.0.0.1 only and needs a bearer key
+          from a Secret.
+        - Images are pinned by digest. Containers run non-root, read-only
+          root filesystem, all capabilities dropped, RuntimeDefault seccomp,
+          no service account token unless needed.
+        Demo-only stand-ins (LocalStack, the fake upstream, the CI-made root
+        CA, the metadata DNS name) are marked as such; check that each is
+        confined to the demo and would not leak into a production shape.
+    - path: ".github/workflows/**"
+      instructions: |
+        The e2e workflow builds a kind cluster and asserts the egress proxy's
+        security invariants. Check that every assertion can actually fail:
+        a negative check must distinguish "refused by policy" from "broken
+        for another reason", and a positive check must run first so a dead
+        proxy does not make negative checks pass. Actions are pinned by full
+        commit SHA, permissions are least privilege, checkout does not
+        persist credentials, downloads are checksum-verified, and no secret
+        value is echoed to the log.
+    - path: "deploy/demo/scripts/**"
+      instructions: |
+        Bash run in CI. Check `set -euo pipefail` behaviour, quoting, that
+        failures are not swallowed, that secret values are masked and never
+        printed, and that temporary key material is removed.
+chat:
+  auto_reply: true

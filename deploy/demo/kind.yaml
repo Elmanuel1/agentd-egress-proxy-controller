@@ -1,0 +1,10 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  # kindnet enforces NetworkPolicy (kube-network-policies, kind v0.24+), so no
+  # extra CNI is installed. The pod subnet is the one range the demo proxy may
+  # dial in 10.0.0.0/8 (see workspace/config.yaml).
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/16
+nodes:
+  - role: control-plane

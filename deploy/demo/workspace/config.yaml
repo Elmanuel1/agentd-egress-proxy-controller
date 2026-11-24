@@ -1,0 +1,94 @@
+# iron-proxy config for (wrk_Demo01, env_Demo01), as the controller renders it.
+# Demo-only differences from production are marked "Demo:".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-env-demo-config
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/name: iron-proxy
+    app.kubernetes.io/instance: proxy-env-demo
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+data:
+  proxy.yaml: |
+    dns:
+      enabled: false
+    proxy:
+      tunnel_listen: ":8080"
+      http_listen: ":8081"
+      https_listen: ":8443"
+      upstream_deny_cidrs:
+        - "0.0.0.0/8"
+        # Demo: 10.0.0.0/8 minus the kind pod subnet 10.244.0.0/16, where the
+        # fake upstream runs. Production denies all of 10.0.0.0/8. The service
+        # subnet 10.96.0.0/16 stays denied.
+        - "10.0.0.0/9"
+        - "10.128.0.0/10"
+        - "10.192.0.0/11"
+        - "10.224.0.0/12"
+        - "10.240.0.0/14"
+        - "10.245.0.0/16"
+        - "10.246.0.0/15"
+        - "10.248.0.0/13"
+        - "100.64.0.0/10"
+        - "127.0.0.0/8"
+        - "169.254.0.0/16"
+        - "172.16.0.0/12"
+        - "192.0.0.0/24"
+        - "192.168.0.0/16"
+        - "198.18.0.0/15"
+        - "224.0.0.0/4"
+        - "240.0.0.0/4"
+        - "::/96"
+        - "64:ff9b::/96"
+        - "64:ff9b:1::/48"
+        - "fc00::/7"
+        - "fe80::/10"
+        - "ff00::/8"
+        - "2002::/24"
+        - "2002:a00::/24"
+        - "2002:6440::/26"
+        - "2002:7f00::/24"
+        - "2002:a9fe::/32"
+        - "2002:ac10::/28"
+        - "2002:c000::/40"
+        - "2002:c0a8::/32"
+        - "2002:c612::/31"
+        - "2002:e000::/20"
+        - "2002:f000::/20"
+    tls:
+      mode: mitm
+      ca_cert: /etc/iron-proxy/ca/tls.crt
+      ca_key: /etc/iron-proxy/ca/tls.key
+    management:
+      listen: "127.0.0.1:9092"
+    metrics:
+      listen: ":9090"
+    log:
+      level: info
+    transforms:
+      - name: allowlist
+        config:
+          domains:
+            - "api.upstream.svc.cluster.local"
+            - "other.upstream.svc.cluster.local"
+            # Demo: an allowed name that resolves to 169.254.169.254 (CoreDNS
+            # entry made in CI), to prove the deny list holds for allowed hosts.
+            - "metadata.demo.test"
+      - name: secrets
+        config:
+          secrets:
+            - source:
+                type: aws_sm
+                secret_id: "agentd/wrk_Demo01/vlt_Demo01/crd_Demo01"
+                json_key: secret_value
+                region: us-east-1
+                ttl: 5m
+              replace:
+                proxy_value: "agentd-ph-crd_Demo01"
+                match_headers: []
+              rules:
+                - host: "api.upstream.svc.cluster.local"
+                  require_tls: true

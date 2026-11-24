@@ -1,0 +1,238 @@
+# The proxy for (wrk_Demo01, env_Demo01): Deployment, Service, NetworkPolicy and
+# HorizontalPodAutoscaler, as the controller writes them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels: &labels
+    app.kubernetes.io/name: iron-proxy
+    app.kubernetes.io/instance: proxy-env-demo
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  # No replicas field: the HorizontalPodAutoscaler owns the count.
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: iron-proxy
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: iron-proxy
+          image: docker.io/ironsh/iron-proxy:0.59.0@sha256:30824bb4b8ba0703bd1acfe57e6ba2fb8dde041387df7a1fc776a807e3f111f5
+          args: ["--config", "/etc/iron-proxy/config/proxy.yaml"]
+          ports:
+            - name: tunnel
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: IRON_MANAGEMENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: iron-proxy-management
+                  key: api-key
+            # Demo: LocalStack stands in for Secrets Manager. It accepts any
+            # key, so these are not secrets. Production sets none of these and
+            # gets AWS credentials from EKS Pod Identity.
+            - name: AWS_ENDPOINT_URL
+              value: http://localstack.localstack.svc.cluster.local:4566
+            - name: AWS_ACCESS_KEY_ID
+              value: test
+            - name: AWS_SECRET_ACCESS_KEY
+              value: test
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            # Demo: trust the fake upstream's test CA. Production uses the
+            # image's system roots.
+            - name: SSL_CERT_FILE
+              value: /etc/upstream-ca/ca.crt
+          readinessProbe:
+            tcpSocket:
+              port: tunnel
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/iron-proxy/config
+              readOnly: true
+            - name: ca
+              mountPath: /etc/iron-proxy/ca
+              readOnly: true
+            - name: upstream-ca
+              mountPath: /etc/upstream-ca
+              readOnly: true
+        # Reloads iron-proxy when the mounted config changes. Stock
+        # configmap-reload cannot send the bearer key the management API
+        # requires, so this is the same loop in the pinned iron-proxy image,
+        # using its busybox sh and wget.
+        - name: config-reload
+          image: docker.io/ironsh/iron-proxy:0.59.0@sha256:30824bb4b8ba0703bd1acfe57e6ba2fb8dde041387df7a1fc776a807e3f111f5
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cfg=/etc/iron-proxy/config/proxy.yaml
+              last=$(sha256sum "$cfg")
+              while sleep 5; do
+                now=$(sha256sum "$cfg") || continue
+                [ "$now" = "$last" ] && continue
+                if wget -q -O /dev/null --post-data '' \
+                  --header "Authorization: Bearer ${IRON_MANAGEMENT_API_KEY}" \
+                  http://127.0.0.1:9092/v1/reload; then
+                  echo 'level=INFO msg="iron-proxy reloaded"'
+                  last=$now
+                else
+                  echo 'level=ERROR msg="iron-proxy reload failed; retrying"'
+                fi
+              done
+          env:
+            - name: IRON_MANAGEMENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: iron-proxy-management
+                  key: api-key
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/iron-proxy/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: proxy-env-demo-config
+        - name: ca
+          secret:
+            secretName: iron-proxy-ca
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: upstream-ca
+          configMap:
+            name: upstream-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/name: iron-proxy
+    app.kubernetes.io/instance: proxy-env-demo
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  selector:
+    app.kubernetes.io/instance: proxy-env-demo
+  ports:
+    - name: tunnel
+      port: 8080
+      targetPort: tunnel
+      protocol: TCP
+---
+# Only sandbox pods labelled with this workspace and environment reach the
+# proxy, and only on the tunnel port. Everything else, including the metrics
+# and management ports, is refused. An unlabelled sandbox reaches no proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandboxes
+          podSelector:
+            matchLabels:
+              agentd.dev/workspace: wrk_Demo01
+              agentd.dev/environment: env_Demo01
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: proxy-env-demo
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70

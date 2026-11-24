@@ -1,0 +1,62 @@
+# LocalStack stands in for AWS Secrets Manager, which CI cannot reach. The
+# proxy reaches it through AWS_ENDPOINT_URL (workspace/proxy.yaml).
+# Pinned to 4.9, the last release line that runs without an auth token.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: localstack
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: localstack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: localstack
+          image: docker.io/localstack/localstack:4.9@sha256:59373b4a27dba3ec15c4db0b7455f0cb68c8a42300e2cbbe362b440f9a131697
+          env:
+            - name: SERVICES
+              value: secretsmanager
+            - name: EAGER_SERVICE_LOADING
+              value: "1"
+          ports:
+            - name: edge
+              containerPort: 4566
+          readinessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: edge
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: localstack
+spec:
+  selector:
+    app: localstack
+  ports:
+    - name: edge
+      port: 4566
+      targetPort: edge
