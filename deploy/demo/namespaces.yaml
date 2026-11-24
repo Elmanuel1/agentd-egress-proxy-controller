@@ -4,6 +4,7 @@ metadata:
   name: org-demo
   labels:
     agentd.dev/organization: org_Demo01
+    pod-security.kubernetes.io/enforce: restricted
 ---
 apiVersion: v1
 kind: Namespace
@@ -21,3 +22,16 @@ metadata:
   name: sandboxes
   labels:
     pod-security.kubernetes.io/enforce: restricted
+---
+# The organization's namespace holds no pods yet; it denies all traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: org-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/organization: org_Demo01
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]

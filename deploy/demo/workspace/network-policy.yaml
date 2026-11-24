@@ -1,0 +1,84 @@
+# Network rules for workspace wrk_Demo01, as the controller writes them: the
+# namespace denies all traffic by default, and each proxy gets its own policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# Only sandbox pods labelled with this workspace and environment reach the
+# proxy, and only on the tunnel port. Everything else, including the metrics
+# and management ports, is refused. An unlabelled sandbox reaches no proxy.
+# The proxy reaches cluster DNS, the Collector, the EKS Pod Identity agent for
+# its AWS credentials, and public addresses; upstream_deny_cidrs then decides
+# per dial. Private and link-local ranges are refused here as well.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandboxes
+          podSelector:
+            matchLabels:
+              agentd.dev/workspace: wrk_Demo01
+              agentd.dev/environment: env_Demo01
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - port: 4318
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 169.254.170.23/32
+        - ipBlock:
+            cidr: fd00:ec2::23/128
+      ports:
+        - port: 80
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]
+        - ipBlock:
+            cidr: ::/0
+            except: ["fc00::/7", "fe80::/10"]

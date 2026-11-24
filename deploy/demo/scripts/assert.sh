@@ -5,10 +5,10 @@ source "$(dirname "$0")/lib.sh"
 
 PROXY="http://proxy-env-demo.ws-demo.svc.cluster.local:8080"
 STAND_IN="agentd-ph-crd_Demo01"
-API="https://api.upstream.svc.cluster.local:8443/"
-OTHER="https://other.upstream.svc.cluster.local:8443/"
-BLOCKED="https://blocked.upstream.svc.cluster.local:8443/"
-MISSING="https://missing.upstream.svc.cluster.local:8443/"
+API="https://api.upstream.test/"
+OTHER="https://other.upstream.test/"
+BLOCKED="https://blocked.upstream.test/"
+MISSING="https://missing.upstream.test/"
 
 failures=0
 check() { # <name> <command...>
@@ -52,26 +52,26 @@ mask "$real"
 log "stand-in swapped for the real value on the credential's host"
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
 check "labelled sandbox connects through its proxy" test "$CODES" = "200 200"
-check "stand-in replaced on api.upstream" test "$(header_sha x-api-key)" = "$(sha "$real")"
+check "stand-in replaced on api.upstream.test" test "$(header_sha x-api-key)" = "$(sha "$real")"
 
 log "stand-in left alone on another allowed host"
 via sandbox-labelled "$OTHER" -H "X-Api-Key: ${STAND_IN}"
-check "other.upstream answered" test "$CODES" = "200 200"
-check "stand-in not replaced on other.upstream" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
+check "other.upstream.test answered" test "$CODES" = "200 200"
+check "stand-in not replaced on other.upstream.test" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
 
 log "stand-in left alone outside TLS, even on the credential's host (require_tls)"
-via sandbox-labelled "http://api.upstream.svc.cluster.local:8080/" -H "X-Api-Key: ${STAND_IN}"
-check "plain HTTP to api.upstream answered" test "$CODES" = "000 200"
+via sandbox-labelled "http://api.upstream.test/" -H "X-Api-Key: ${STAND_IN}"
+check "plain HTTP to api.upstream.test answered" test "$CODES" = "000 200"
 check "stand-in not replaced over plain HTTP" test "$(header_sha x-api-key)" = "$(sha "$STAND_IN")"
 
 log "a credential whose secret cannot be read"
 via sandbox-labelled "$MISSING" -H "X-Api-Key: agentd-ph-crd_Missing01"
-check "missing.upstream answered" test "$CODES" = "200 200"
+check "missing.upstream.test answered" test "$CODES" = "200 200"
 check "its stand-in passes unchanged" test "$(header_sha x-api-key)" = "$(sha agentd-ph-crd_Missing01)"
 
 log "host outside the allowlist"
 via sandbox-labelled "$BLOCKED"
-check "blocked.upstream refused with 403 at CONNECT" refused_at_connect
+check "blocked.upstream.test refused with 403 at CONNECT" refused_at_connect
 
 log "cloud metadata address"
 via sandbox-labelled "https://169.254.169.254/latest/meta-data/"
@@ -107,6 +107,13 @@ hpa_shape() {
         == {"cpu": 70, "memory": 70}' <<<"$hpa" >/dev/null
 }
 check "HPA scales proxy-env-demo 1 to 5 on CPU and memory at 70%" hpa_shape
+hpa_reads_metrics() {
+  kubectl -n ws-demo get hpa proxy-env-demo -o json | jq -e '
+    ([.status.conditions[]? | select(.type == "ScalingActive" and .status == "True")] | length == 1)
+    and ([.status.currentMetrics[]?.resource | select(.current.averageUtilization != null) | .name]
+         | sort == ["cpu", "memory"])' >/dev/null
+}
+check "HPA reads live CPU and memory from metrics-server (within 180 s)" retry 36 5 hpa_reads_metrics
 
 log "intermediate CA Secret is restored by cert-manager"
 old_serial="$(kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)"
@@ -126,11 +133,11 @@ check "restored intermediate is a CA" \
 
 log "a config change reaches the running proxy through the watcher"
 kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
-  | jq '.data["proxy.yaml"] |= sub("(?<i> *)- \"other.upstream.svc.cluster.local\"\n";
-      "\(.i)- \"other.upstream.svc.cluster.local\"\n\(.i)- \"blocked.upstream.svc.cluster.local\"\n")' \
+  | jq '.data["proxy.yaml"] |= sub("(?<i> *)- \"other.upstream.test\"\n";
+      "\(.i)- \"other.upstream.test\"\n\(.i)- \"blocked.upstream.test\"\n")' \
   | kubectl replace -f -
 blocked_allowed() { via sandbox-labelled "$BLOCKED"; [[ $CODES == "200 200" ]]; }
-check "blocked.upstream allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
+check "blocked.upstream.test allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
 watcher_lines() { kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -c "$1" || true; }
 sleep 10 # two more watcher polls, so a repeated reload would show
 check "watcher reloaded exactly once for the change" test "$(watcher_lines 'iron-proxy reloaded')" = 1
@@ -149,7 +156,7 @@ check "watcher tried the rejected config exactly once" \
 via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
 check "proxy still swaps with the last good config" test "$(header_sha x-api-key)" = "$(sha "$real")"
 via sandbox-labelled "$BLOCKED"
-check "last good config, not the startup one, still serves blocked.upstream" test "$CODES" = "200 200"
+check "last good config, not the startup one, still serves blocked.upstream.test" test "$CODES" = "200 200"
 
 if (( failures > 0 )); then
   fail "${failures} check(s) failed"

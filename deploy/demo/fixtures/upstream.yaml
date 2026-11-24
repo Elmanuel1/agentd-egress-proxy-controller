@@ -1,12 +1,14 @@
 # Fake HTTPS upstream for the e2e test. It answers every request with the Host
 # and the SHA-256 of each request header value it received, as JSON, so the
 # test can see what the proxy forwarded while no credential value travels back
-# to the sandbox. Three headless Services name the same pod; headless so DNS gives
-# the pod address (10.244.0.0/16) and the proxy dials the pod directly.
-#   api      on the allowlist; the credential's host
-#   other    on the allowlist; not the credential's host
-#   blocked  not on the allowlist
-#   missing  on the allowlist; host of a credential whose secret does not exist
+# to the sandbox. CoreDNS (scripts/fixtures.sh) resolves its four names to the
+# Service's external IP 203.0.113.10 (TEST-NET-3), so the proxy dials a public
+# address and runs the production deny list unchanged; kube-proxy forwards
+# 443 and 80 to the pod.
+#   api.upstream.test      on the allowlist; the credential's host
+#   other.upstream.test    on the allowlist; not the credential's host
+#   blocked.upstream.test  not on the allowlist
+#   missing.upstream.test  on the allowlist; host of a credential whose secret does not exist
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -55,10 +57,10 @@ metadata:
 spec:
   secretName: echo-tls
   dnsNames:
-    - api.upstream.svc.cluster.local
-    - other.upstream.svc.cluster.local
-    - blocked.upstream.svc.cluster.local
-    - missing.upstream.svc.cluster.local
+    - api.upstream.test
+    - other.upstream.test
+    - blocked.upstream.test
+    - missing.upstream.test
   privateKey:
     algorithm: ECDSA
     size: 256
@@ -177,55 +179,39 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: api
+  name: echo
   namespace: upstream
 spec:
-  clusterIP: None
   selector:
     app: echo
+  externalIPs: ["203.0.113.10"]
   ports:
     - name: https
-      port: 8443
+      port: 443
       targetPort: https
+      protocol: TCP
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
 ---
-apiVersion: v1
-kind: Service
+# Only proxy namespaces reach the upstream. Its egress stays open: the checks
+# use this pod as a control that the cluster reaches the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: other
+  name: echo
   namespace: upstream
 spec:
-  clusterIP: None
-  selector:
-    app: echo
-  ports:
-    - name: https
-      port: 8443
-      targetPort: https
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: blocked
-  namespace: upstream
-spec:
-  clusterIP: None
-  selector:
-    app: echo
-  ports:
-    - name: https
-      port: 8443
-      targetPort: https
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: missing
-  namespace: upstream
-spec:
-  clusterIP: None
-  selector:
-    app: echo
-  ports:
-    - name: https
-      port: 8443
-      targetPort: https
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              agentd.dev/proxy-namespace: "true"
+      ports:
+        - port: 8443
+          protocol: TCP
+        - port: 8080
+          protocol: TCP

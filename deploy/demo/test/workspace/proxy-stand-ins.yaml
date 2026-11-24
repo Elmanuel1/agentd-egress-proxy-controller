@@ -1,0 +1,33 @@
+# moto stands in for Secrets Manager. It accepts any key, so these are not
+# secrets; production sets none of these and gets AWS credentials from EKS Pod
+# Identity. The proxy trusts the fake upstream's CA in place of the image's
+# system roots.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+spec:
+  template:
+    spec:
+      containers:
+        - name: iron-proxy
+          env:
+            - name: AWS_ENDPOINT_URL
+              value: http://moto.moto.svc.cluster.local:5000
+            - name: AWS_ACCESS_KEY_ID
+              value: test
+            - name: AWS_SECRET_ACCESS_KEY
+              value: test
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: SSL_CERT_FILE
+              value: /etc/upstream-ca/ca.crt
+          volumeMounts:
+            - name: upstream-ca
+              mountPath: /etc/upstream-ca
+              readOnly: true
+      volumes:
+        - name: upstream-ca
+          configMap:
+            name: upstream-ca

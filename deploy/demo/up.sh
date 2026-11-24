@@ -27,9 +27,10 @@ kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" \
   --config "${DEMO_DIR}/kind.yaml" --kubeconfig "$KUBECONFIG" --wait 120s
 
 phase "cert-manager" install-cert-manager.sh
+phase "metrics-server" install-metrics-server.sh
 phase "root CA and ClusterIssuer (stand-in for Secrets Manager and External Secrets)" root-ca.sh
-phase "fixtures (moto, fake upstream, metadata DNS name)" fixtures.sh
-phase "OpenTelemetry Collector" observability.sh
+phase "fixtures (moto, fake upstream, DNS names)" fixtures.sh
+phase "OpenTelemetry Collector and test backend" observability.sh
 phase "workspace proxy and sandboxes" proxy.sh
 phase "assertions" assert.sh
 

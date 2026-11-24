@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Test fixtures that stand in for things outside the cluster: moto for
-# Secrets Manager, a fake HTTPS upstream, and a DNS name that resolves to the
-# cloud metadata address.
+# Secrets Manager, a fake HTTPS upstream on a public test address, and a DNS
+# name that resolves to the cloud metadata address.
 source "$(dirname "$0")/lib.sh"
 
 log "moto and the fake upstream"
@@ -21,10 +21,15 @@ log "fake upstream's CA, for the proxy only"
 kubectl -n ws-demo create configmap upstream-ca \
   --from-literal=ca.crt="$(kubectl -n upstream get secret upstream-ca -o jsonpath='{.data.ca\.crt}' | base64 -d)"
 
-log "metadata.demo.test resolves to 169.254.169.254"
+log "the upstream's names resolve to its external IP; metadata.demo.test to 169.254.169.254"
 corefile="$(kubectl -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}')"
 grep -q '^\.:53 {' <<<"$corefile" || fail "unexpected Corefile layout"
-patched="$(awk '{ print } /^\.:53 \{/ { print "    hosts {\n        169.254.169.254 metadata.demo.test\n        fallthrough\n    }" }' <<<"$corefile")"
+hosts='    hosts {
+        203.0.113.10 api.upstream.test other.upstream.test blocked.upstream.test missing.upstream.test
+        169.254.169.254 metadata.demo.test
+        fallthrough
+    }'
+patched="$(HOSTS="$hosts" awk '{ print } /^\.:53 \{/ { print ENVIRON["HOSTS"] }' <<<"$corefile")"
 kubectl -n kube-system create configmap coredns --from-literal=Corefile="$patched" \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n kube-system rollout restart deploy/coredns

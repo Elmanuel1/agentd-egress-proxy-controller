@@ -12,12 +12,9 @@ key="$(openssl rand -hex 32)"
 unset key
 kubectl -n ws-demo create secret generic iron-proxy-management --from-file=api-key="${key_dir}/api-key"
 
-log "workspace identity and intermediate CA"
-kubectl apply -f "${DEMO_DIR}/workspace/identity.yaml"
+log "the controller's manifests, with the test overlay's stand-ins"
+kubectl apply -k "${DEMO_DIR}/test/workspace"
 kubectl -n ws-demo wait certificate/iron-proxy-ca --for=condition=Ready --timeout=120s
-
-log "proxy"
-kubectl apply -f "${DEMO_DIR}/workspace/config.yaml" -f "${DEMO_DIR}/workspace/proxy.yaml"
 kubectl -n ws-demo rollout status deploy/proxy-env-demo --timeout=180s
 
 log "sandboxes"

@@ -1,0 +1,29 @@
+# The in-cluster stand-ins live at pod addresses, which the production policy
+# refuses as private. This adds only them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-env-demo-fixtures
+  namespace: ws-demo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: moto
+      ports:
+        - port: 5000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: upstream
+      ports:
+        - port: 8443
+          protocol: TCP
+        - port: 8080
+          protocol: TCP

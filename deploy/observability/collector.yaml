@@ -7,15 +7,41 @@
 # required secret that cannot be read sets `reject_reason: secret_unavailable`.
 # The proxy puts its workspace and environment ids on each record's resource;
 # they stay on the logs and are removed from the metrics.
-# Demo: the file exporter writes OTLP JSON to stdout so the demo checks read it
-# with kubectl logs. A deployment replaces it with an otlp exporter to the
-# backends the infrastructure picks.
+# The platform names the backend in ConfigMap otel-backend (key `endpoint`, an
+# OTLP/gRPC host:port) and adds the NetworkPolicy that lets the Collector reach
+# it. The backend's certificate is checked against the agentd root and the
+# system roots.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: observability
   labels:
     pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: otel-collector-tls
+  namespace: observability
+spec:
+  secretName: otel-collector-tls
+  dnsNames:
+    - otel-collector.observability
+    - otel-collector.observability.svc
+    - otel-collector.observability.svc.cluster.local
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - server auth
+    - digital signature
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: agentd-root-ca
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -24,12 +50,25 @@ metadata:
   namespace: observability
 data:
   config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     receivers:
       otlp:
         protocols:
           http:
             endpoint: 0.0.0.0:4318
+            tls:
+              cert_file: /tls/tls.crt
+              key_file: /tls/tls.key
+              min_version: "1.3"
+              # cert-manager renews the certificate in place.
+              reload_interval: 1h
     processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
       transform/flatten:
         error_mode: ignore
         log_statements:
@@ -42,6 +81,7 @@ data:
         metric_statements:
           - delete_key(resource.attributes, "agentd.workspace_id")
           - delete_key(resource.attributes, "agentd.environment_id")
+      batch: {}
     connectors:
       count:
         logs:
@@ -61,19 +101,29 @@ data:
             conditions:
               - log.attributes["secret_unavailable"] == true
     exporters:
-      file:
-        path: /dev/stdout
-        flush_interval: 1s
+      otlp_grpc:
+        endpoint: ${env:OTEL_BACKEND_ENDPOINT}
+        tls:
+          ca_file: /tls/ca.crt
+          include_system_ca_certs_pool: true
+          min_version: "1.2"
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 5m
+        sending_queue:
+          enabled: true
+          queue_size: 5000
     service:
+      extensions: [health_check]
       pipelines:
         logs:
           receivers: [otlp]
-          processors: [transform/flatten]
-          exporters: [count, file]
+          processors: [memory_limiter, transform/flatten, batch]
+          exporters: [count, otlp_grpc]
         metrics:
           receivers: [count]
-          processors: [transform/drop_tenant_ids]
-          exporters: [file]
+          processors: [memory_limiter, transform/drop_tenant_ids, batch]
+          exporters: [otlp_grpc]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -81,7 +131,13 @@ metadata:
   name: otel-collector
   namespace: observability
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: otel-collector
@@ -96,25 +152,51 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: otel-collector
       containers:
         - name: otel-collector
           image: docker.io/otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
           args: ["--config=/conf/config.yaml"]
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-backend
+                  key: endpoint
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
           ports:
             - name: otlp-http
               containerPort: 4318
+            - name: health
+              containerPort: 13133
           readinessProbe:
-            tcpSocket:
-              port: otlp-http
-            periodSeconds: 2
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
             limits:
-              memory: 256Mi
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -124,10 +206,28 @@ spec:
             - name: config
               mountPath: /conf
               readOnly: true
+            - name: tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: config
           configMap:
             name: otel-collector
+        - name: tls
+          secret:
+            secretName: otel-collector-tls
+            defaultMode: 0440
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: otel-collector
 ---
 apiVersion: v1
 kind: Service
@@ -143,8 +243,18 @@ spec:
       targetPort: otlp-http
       protocol: TCP
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: observability
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
 # Only iron-proxy pods in proxy namespaces send to the Collector, and only on
-# OTLP/HTTP. Sandboxes and every other pod are refused.
+# OTLP/HTTPS. The Collector itself reaches only cluster DNS here; the platform's
+# backend policy adds the rest.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -154,7 +264,7 @@ spec:
   podSelector:
     matchLabels:
       app: otel-collector
-  policyTypes: ["Ingress"]
+  policyTypes: ["Ingress", "Egress"]
   ingress:
     - from:
         - namespaceSelector:
@@ -165,4 +275,17 @@ spec:
               app.kubernetes.io/name: iron-proxy
       ports:
         - port: 4318
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
           protocol: TCP

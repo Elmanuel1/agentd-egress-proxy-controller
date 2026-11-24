@@ -27,8 +27,8 @@ reviews:
           unlabelled pod reaches no proxy.
         - Upstream IP deny: `upstream_deny_cidrs` keeps the full internal list
           (private, shared, loopback, link-local including 169.254.169.254,
-          multicast, reserved, IPv6 equivalents and 6to4/NAT64 forms). The
-          only allowed exception is the kind pod subnet in the demo config.
+          multicast, reserved, IPv6 equivalents and 6to4/NAT64 forms), with
+          no exception, in the demo too.
         - Secret confinement: real credential values exist only in Secrets
           Manager (moto in the demo) and in the proxy's memory. They never
           appear in a manifest, ConfigMap, env var, log line or sandbox. A
@@ -40,9 +40,15 @@ reviews:
         - Images are pinned by digest. Containers run non-root, read-only
           root filesystem, all capabilities dropped, RuntimeDefault seccomp,
           no service account token unless needed.
-        Demo-only stand-ins (moto, the fake upstream, the demo-made root
-        CA, the metadata DNS name) are marked as such; check that each is
-        confined to the demo and would not leak into a production shape.
+        - Every namespace denies traffic by default; each workload gets only
+          the ingress and egress it needs. The proxy reaches cluster DNS, the
+          Collector, the EKS Pod Identity agent and public addresses only.
+        - The proxy sends OTLP to the Collector over TLS only.
+        `deploy/demo/workspace/` and `deploy/observability/` are production
+        shape and must hold no test-only setting. Test-only settings live in
+        `deploy/demo/test/` overlays, and stand-ins (moto, the fake upstream,
+        the test backend) in `deploy/demo/fixtures/`. Flag any test-only
+        setting that leaks into a production-shape file.
     - path: ".github/workflows/**"
       instructions: |
         The e2e workflow builds a kind cluster and asserts the egress proxy's

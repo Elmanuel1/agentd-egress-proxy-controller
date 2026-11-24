@@ -1,5 +1,5 @@
 # moto stands in for AWS Secrets Manager, since the demo runs without AWS. The proxy
-# reaches it through AWS_ENDPOINT_URL (workspace/proxy.yaml).
+# reaches it through AWS_ENDPOINT_URL, set only by the test overlay (test/workspace).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -75,3 +75,22 @@ spec:
     - name: api
       port: 5000
       targetPort: api
+---
+# Only proxy namespaces reach moto, and moto reaches nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: moto
+  namespace: moto
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              agentd.dev/proxy-namespace: "true"
+      ports:
+        - port: 5000
+          protocol: TCP
+  egress: []
