@@ -40,7 +40,7 @@ jobs:
       - name: Root CA and ClusterIssuer (stand-in for Secrets Manager and External Secrets)
         run: deploy/demo/scripts/root-ca.sh
 
-      - name: Fixtures (LocalStack, fake upstream, metadata DNS name)
+      - name: Fixtures (moto, fake upstream, metadata DNS name)
         run: deploy/demo/scripts/fixtures.sh
 
       - name: Workspace proxy and sandboxes

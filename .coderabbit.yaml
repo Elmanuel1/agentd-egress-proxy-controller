@@ -30,7 +30,7 @@ reviews:
           multicast, reserved, IPv6 equivalents and 6to4/NAT64 forms). The
           only allowed exception is the kind pod subnet in the demo config.
         - Secret confinement: real credential values exist only in Secrets
-          Manager (LocalStack in CI) and in the proxy's memory. They never
+          Manager (moto in CI) and in the proxy's memory. They never
           appear in a manifest, ConfigMap, env var, log line or sandbox. A
           sandbox holds stand-ins and the root CA certificate only, never a
           CA private key. The intermediate CA key is mounted only into the
@@ -40,7 +40,7 @@ reviews:
         - Images are pinned by digest. Containers run non-root, read-only
           root filesystem, all capabilities dropped, RuntimeDefault seccomp,
           no service account token unless needed.
-        Demo-only stand-ins (LocalStack, the fake upstream, the CI-made root
+        Demo-only stand-ins (moto, the fake upstream, the CI-made root
         CA, the metadata DNS name) are marked as such; check that each is
         confined to the demo and would not leak into a production shape.
     - path: ".github/workflows/**"

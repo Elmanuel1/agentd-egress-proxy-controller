@@ -41,9 +41,9 @@ header() { jq -r --arg h "$1" '.headers[$h] // empty' <<<"$BODY"; }
 refused_at_connect() { [[ $CODES == 403\ * ]] && (( RC != 0 )); }
 no_connection() { [[ $CODES == "000 000" ]] && (( RC == 7 || RC == 28 )); }
 
-real="$(kubectl -n localstack exec deploy/localstack -- awslocal secretsmanager get-secret-value \
-  --region us-east-1 --secret-id "$SECRET_ID" --query SecretString --output text | jq -r .secret_value)"
-[[ -n $real ]] || fail "could not read the credential value back from LocalStack"
+real="$(kubectl -n moto exec deploy/moto -- python3 -c "$(cat "${DEMO_DIR}/scripts/secrets-manager.py")" get "$SECRET_ID" \
+  | jq -r .secret_value)"
+[[ -n $real ]] || fail "could not read the credential value back from moto"
 echo "::add-mask::${real}"
 
 log "stand-in swapped for the real value on the credential's host"

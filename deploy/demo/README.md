@@ -10,7 +10,7 @@ Hand-written manifests for what agentd-egress-proxy-controller writes for one or
 | `ws-demo` | ServiceAccount `iron-proxy`, Certificate `iron-proxy-ca`, ConfigMap `proxy-env-demo-config`, Deployment, Service, NetworkPolicy and HorizontalPodAutoscaler `proxy-env-demo` | The workspace's proxy for `env_Demo01`: stock iron-proxy 0.59.0 pinned by digest, plus a reload watcher. |
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
 | `cert-manager` | Secret `agentd-root-ca`, ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
-| `localstack` | LocalStack 4.9 | Stands in for AWS Secrets Manager. |
+| `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. |
 | `upstream` | HTTPS echo server behind `api`, `other` and `blocked` | Fake upstream that returns the headers it received. |
 
 ## How a request flows
@@ -44,7 +44,7 @@ Hand-written manifests for what agentd-egress-proxy-controller writes for one or
 Each is marked `Demo:` where it appears.
 
 - The root CA is made by `scripts/root-ca.sh`. In production External Secrets fills the same Secret from AWS Secrets Manager.
-- The proxy reaches LocalStack through `AWS_ENDPOINT_URL` with dummy keys. In production it uses EKS Pod Identity.
+- The proxy reaches moto through `AWS_ENDPOINT_URL` with dummy keys. In production it uses EKS Pod Identity.
 - The proxy trusts the fake upstream's CA through `SSL_CERT_FILE`. In production it uses the image's system roots.
 - `upstream_deny_cidrs` lets the proxy dial the kind pod subnet `10.244.0.0/16`, where the fake upstream runs. In production all of `10.0.0.0/8` is denied.
 - The allowlist holds `metadata.demo.test`, which CoreDNS resolves to `169.254.169.254`.

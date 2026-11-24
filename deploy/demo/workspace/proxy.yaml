@@ -51,11 +51,11 @@ spec:
                 secretKeyRef:
                   name: iron-proxy-management
                   key: api-key
-            # Demo: LocalStack stands in for Secrets Manager. It accepts any
+            # Demo: moto stands in for Secrets Manager. It accepts any
             # key, so these are not secrets. Production sets none of these and
             # gets AWS credentials from EKS Pod Identity.
             - name: AWS_ENDPOINT_URL
-              value: http://localstack.localstack.svc.cluster.local:4566
+              value: http://moto.moto.svc.cluster.local:5000
             - name: AWS_ACCESS_KEY_ID
               value: test
             - name: AWS_SECRET_ACCESS_KEY
