@@ -94,4 +94,4 @@ iron-proxy reloads its config on `POST /v1/reload` at the management listener, `
 
 ## Scripts
 
-`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/observability.sh`, `scripts/proxy.sh`, `scripts/assert.sh`. `install-cert-manager.sh` and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
+`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/observability.sh`, `scripts/proxy.sh`, `scripts/assert.sh` (it sources `scripts/assert-collector.sh`). `install-cert-manager.sh` and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions live in `scripts/lib.sh`.
