@@ -90,8 +90,14 @@ via sandbox-labelled "http://169.254.169.254/latest/meta-data/"
 check "plain HTTP to 169.254.169.254 refused with 403" test "$CODES" = "000 403"
 via sandbox-labelled "https://metadata.demo.test/latest/meta-data/"
 check "allowed name resolving to 169.254.169.254 gets 502" test "$CODES" = "200 502"
-check "...because upstream_deny_cidrs refused the dial" \
-  bash -c 'kubectl -n ws-demo logs deploy/proxy-env-demo -c iron-proxy | grep -q "denied by upstream_deny_cidrs: 169.254.169.254"'
+# The HPA may have added pods, so every proxy pod's log is read.
+PROXY_PODS="app.kubernetes.io/instance=proxy-env-demo"
+dial_denied_logged() {
+  local out
+  out="$(kubectl -n ws-demo logs -l "$PROXY_PODS" -c iron-proxy --tail=-1 --max-log-requests=10)" || return 1
+  grep -q "denied by upstream_deny_cidrs: 169.254.169.254" <<<"$out"
+}
+check "...because upstream_deny_cidrs refused the dial" dial_denied_logged
 
 log "network policy"
 via sandbox-unlabelled "$OTHER"
@@ -139,32 +145,7 @@ check "restored intermediate chains to the root" \
 check "restored intermediate is a CA" \
   bash -c "openssl x509 -noout -text -in '${work}/intermediate.crt' | grep -q 'CA:TRUE'"
 
-log "a config change reaches the running proxy through the watcher"
-kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
-  | jq '.data["proxy.yaml"] |= sub("(?<i> *)- \"other.upstream.test\"\n";
-      "\(.i)- \"other.upstream.test\"\n\(.i)- \"blocked.upstream.test\"\n")' \
-  | kubectl replace -f -
-blocked_allowed() { via sandbox-labelled "$BLOCKED"; [[ $CODES == "200 200" ]]; }
-check "blocked.upstream.test allowed after the ConfigMap change (within 180 s)" retry 36 5 blocked_allowed
-watcher_lines() { kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -c "$1" || true; }
-sleep 10 # two more watcher polls, so a repeated reload would show
-check "watcher reloaded exactly once for the change" test "$(watcher_lines 'iron-proxy reloaded')" = 1
-
-log "a config the proxy rejects is logged at ERROR and the running config stays"
-kubectl -n ws-demo get configmap proxy-env-demo-config -o json \
-  | jq '.data["proxy.yaml"] += "not_a_field: true\n"' \
-  | kubectl replace -f -
-reload_error_logged() {
-  kubectl -n ws-demo logs deploy/proxy-env-demo -c config-reload | grep -q 'level=ERROR msg="iron-proxy reload failed"'
-}
-check "watcher logged the rejected reload at ERROR (within 180 s)" retry 36 5 reload_error_logged
-sleep 10
-check "watcher tried the rejected config exactly once" \
-  test "$(watcher_lines 'level=ERROR msg="iron-proxy reload failed"')" = 1
-via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
-check "proxy still swaps with the last good config" test "$(header_sha x-api-key)" = "$(sha "$real")"
-via sandbox-labelled "$BLOCKED"
-check "last good config, not the startup one, still serves blocked.upstream.test" test "$CODES" = "200 200"
+source "$(dirname "$0")/assert-reload.sh"
 
 if (( failures > 0 )); then
   fail "${failures} check(s) failed"

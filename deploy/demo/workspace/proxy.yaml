@@ -57,8 +57,8 @@ spec:
             # certificate the proxy accepts for the Collector.
             - name: OTEL_EXPORTER_OTLP_CERTIFICATE
               value: /etc/otel-ca/ca.crt
-            - name: OTEL_RESOURCE_ATTRIBUTES
-              value: agentd.workspace_id=wrk_Demo01,agentd.environment_id=env_Demo01
+            # No workspace or environment id: the Collector reads them from
+            # this pod's labels.
           readinessProbe:
             tcpSocket:
               port: tunnel
@@ -91,7 +91,8 @@ spec:
               readOnly: true
         # Stock configmap-reload cannot send the bearer key the management API
         # requires, so this is the same loop in the pinned iron-proxy image,
-        # using its busybox sh and wget.
+        # using its busybox sh and nc. busybox wget drops the body of an error
+        # answer, which holds the proxy's reason for rejecting a config.
         - name: config-reload
           image: docker.io/ironsh/iron-proxy:0.59.0@sha256:30824bb4b8ba0703bd1acfe57e6ba2fb8dde041387df7a1fc776a807e3f111f5
           command: ["/bin/sh", "-c"]
@@ -103,12 +104,13 @@ spec:
                 now=$(sha256sum "$cfg") || continue
                 [ "$now" = "$last" ] && continue
                 last=$now
-                if answer=$(wget -O /dev/null --post-data '' \
-                  --header "Authorization: Bearer ${IRON_MANAGEMENT_API_KEY}" \
-                  http://127.0.0.1:9092/v1/reload 2>&1); then
+                answer=$(printf 'POST /v1/reload HTTP/1.0\r\nAuthorization: Bearer %s\r\nContent-Length: 0\r\n\r\n' \
+                  "$IRON_MANAGEMENT_API_KEY" | nc -w 10 127.0.0.1 9092 2>&1 | tr -d '\r')
+                status=$(echo "$answer" | head -n 1 | cut -d ' ' -f 2)
+                if [ "$status" = 200 ]; then
                   echo 'level=INFO msg="iron-proxy reloaded"'
                 else
-                  echo "level=ERROR msg=\"iron-proxy reload failed\" answer=\"$(echo "$answer" | tr '\n"' "  ")\""
+                  echo "level=ERROR msg=\"iron-proxy reload failed\" status=${status:-none} answer=\"$(echo "$answer" | tail -n 1 | tr '"' "'")\""
                 fi
               done
           env:

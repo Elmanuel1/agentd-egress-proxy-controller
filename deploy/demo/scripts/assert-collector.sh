@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2154 # real and work are set by assert.sh, which sources this file
+# shellcheck shell=bash disable=SC2154 # PROXY_PODS, real and work are set by assert.sh, which sources this file
 # The OpenTelemetry Collector checks. Sourced by assert.sh, after the requests whose
 # counts they check; uses its check, via, no_connection, real and work. What the Collector
 # exports is read from the test backend's stdout.
@@ -84,12 +84,13 @@ logs_carry_ids() {
     | length > 0 and all' >/dev/null
 }
 check "log records carry the workspace and environment ids" logs_carry_ids
+# The namespace and pod names carry the workspace id too, so no k8s.* key either.
 metrics_lack_ids() {
   collector_out | jq -se '[.[].resourceMetrics[]?] as $m | ($m | length > 0)
-    and ([$m[] | .. | objects | .key? // empty
-      | select(. == "agentd.workspace_id" or . == "agentd.environment_id")] | length == 0)' >/dev/null
+    and ([$m[] | .. | objects | .key? // empty | strings
+      | select(startswith("agentd.") or startswith("k8s."))] | length == 0)' >/dev/null
 }
-check "no workspace or environment id on the metrics" metrics_lack_ids
+check "no workspace, environment, namespace or pod name on the metrics" metrics_lack_ids
 no_credential_exported() {
   local collector backend
   collector="$(kubectl -n observability logs -l app=otel-collector --tail=-1)" || return 1
@@ -100,3 +101,49 @@ no_credential_exported() {
   (( rc == 1 )) # 1 is no match; 0 is a match and 2 an error
 }
 check "the credential value never reaches the Collector or its backend" no_credential_exported
+
+log "the Collector takes the ids from the sending pod, never from the record"
+# A container added to a proxy pod shares its network, so it sends from the
+# pod's address, as a compromised proxy would. Its record names another workspace.
+forge_pod="$(kubectl -n ws-demo get pod -l "$PROXY_PODS" -o jsonpath='{.items[0].metadata.name}')"
+forge_ip="$(kubectl -n ws-demo get pod "$forge_pod" -o jsonpath='{.status.podIP}')"
+forge_body="forged-$(openssl rand -hex 8)"
+forge_record="$(jq -cn --arg b "$forge_body" '{resourceLogs: [{
+  resource: {attributes: [
+    {key: "agentd.workspace_id", value: {stringValue: "wrk_Forged01"}},
+    {key: "agentd.environment_id", value: {stringValue: "env_Forged01"}},
+    {key: "k8s.pod.ip", value: {stringValue: "192.0.2.1"}}]},
+  scopeLogs: [{logRecords: [{body: {stringValue: $b}}]}]}]}')"
+# Base64, since kubectl debug splits --env values on commas.
+b64() { openssl base64 -A <"${work}/$1"; }
+printf '%s' "$forge_record" >"${work}/forge-record.json"
+# shellcheck disable=SC2016 # the variables expand inside the debug container
+kubectl -n ws-demo debug "$forge_pod" --profile=restricted --container=forge-otlp \
+  --image=docker.io/curlimages/curl:8.15.0@sha256:4026b29997dc7c823b51c164b71e2b51e0fd95cce4601f78202c513d97da2922 \
+  --env="CA_B64=$(b64 otlp-trusted.crt)" --env="RECORD_B64=$(b64 forge-record.json)" -- \
+  sh -c 'echo "$CA_B64" | base64 -d >/tmp/ca.crt && echo "$RECORD_B64" | base64 -d \
+    | curl -sS -f --cacert /tmp/ca.crt -H "Content-Type: application/json" --data-binary @- \
+      https://otel-collector.observability:4318/v1/logs'
+forge_sent() {
+  FORGE_EXIT="$(kubectl -n ws-demo get pod "$forge_pod" -o json | jq -er '.status.ephemeralContainerStatuses[]?
+    | select(.name == "forge-otlp") | .state.terminated.exitCode // empty')"
+}
+retry 30 2 forge_sent || true
+check "a proxy pod sent a record naming another workspace, over TLS (within 60 s)" test "${FORGE_EXIT:-}" = 0
+forge_relabelled() {
+  collector_out | jq -se --arg b "$forge_body" --arg pod "$forge_pod" --arg ip "$forge_ip" '
+    [.[].resourceLogs[]? | select([.scopeLogs[]?.logRecords[]?.body.stringValue] | index($b))
+      | .resource.attributes | map({(.key): (.value | to_entries[0].value)}) | add] as $r
+    | ($r | length > 0) and ($r | all(.["agentd.workspace_id"] == "wrk_Demo01"
+        and .["agentd.environment_id"] == "env_Demo01"
+        and .["k8s.pod.name"] == $pod and .["k8s.pod.ip"] == $ip))' >/dev/null
+}
+check "the record carries the sending pod's workspace, environment, name and address (within 60 s)" \
+  retry 20 3 forge_relabelled
+no_forged_id() {
+  local out rc=0
+  out="$(kubectl -n otel-backend logs deploy/otel-backend)" || return 1
+  grep -qE 'wrk_Forged01|env_Forged01|192[.]0[.]2[.]1' <<<"$out" || rc=$?
+  (( rc == 1 ))
+}
+check "the forged ids and address reach no record" no_forged_id

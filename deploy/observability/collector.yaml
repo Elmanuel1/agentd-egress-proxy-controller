@@ -5,17 +5,51 @@
 # {name, action, duration_ms, annotations} maps. The secrets transform's
 # annotations hold `swapped` and `secret_unavailable` when they apply; a
 # required secret that cannot be read sets `reject_reason: secret_unavailable`.
-# The proxy puts its workspace and environment ids on each record's resource;
-# they stay on the logs and are removed from the metrics.
+# The Collector sets each record's workspace and environment ids itself, from
+# the labels of the pod that sent it (k8sattributes, matched on the connection's
+# source address), after deleting any the sender supplied, so a proxy cannot
+# write records under another workspace. The ids stay on the logs and are
+# removed from the metrics.
 # The platform names the backend in ConfigMap otel-backend: `endpoint`, an
 # OTLP/gRPC host:port, and `ca.crt`, the one CA the Collector trusts for it. It
-# also adds the NetworkPolicy that lets the Collector reach the backend.
+# also adds the NetworkPolicies that let the Collector reach the backend and the
+# Kubernetes API server.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: observability
   labels:
     pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: observability
+automountServiceAccountToken: false
+---
+# k8sattributes reads pods only: no namespaces, nodes or ReplicaSets, and no write.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentd-otel-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentd-otel-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentd-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: observability
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -68,6 +102,31 @@ data:
         check_interval: 1s
         limit_percentage: 80
         spike_limit_percentage: 20
+      transform/drop_sent_ids:
+        error_mode: propagate
+        log_statements:
+          - delete_matching_keys(resource.attributes, "^(agentd|k8s)[.]")
+      # Matches on the connection's source address only, never on attributes
+      # the sender supplied.
+      k8sattributes:
+        auth_type: serviceAccount
+        filter:
+          labels:
+            - key: app.kubernetes.io/name
+              value: iron-proxy
+              op: equals
+        pod_association:
+          - sources:
+              - from: connection
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name]
+          labels:
+            - tag_name: agentd.workspace_id
+              key: agentd.dev/workspace
+              from: pod
+            - tag_name: agentd.environment_id
+              key: agentd.dev/environment
+              from: pod
       transform/flatten:
         error_mode: ignore
         log_statements:
@@ -77,9 +136,9 @@ data:
           - set(log.attributes["secret_unavailable"], IsMatch(log.attributes["request_transforms"], "secret_unavailable"))
       transform/drop_tenant_ids:
         error_mode: ignore
+        # The namespace and pod names carry the workspace id too.
         metric_statements:
-          - delete_key(resource.attributes, "agentd.workspace_id")
-          - delete_key(resource.attributes, "agentd.environment_id")
+          - delete_matching_keys(resource.attributes, "^(agentd|k8s)[.]")
       batch: {}
     connectors:
       count:
@@ -116,7 +175,7 @@ data:
       pipelines:
         logs:
           receivers: [otlp]
-          processors: [memory_limiter, transform/flatten, batch]
+          processors: [memory_limiter, transform/drop_sent_ids, k8sattributes, transform/flatten, batch]
           exporters: [count, otlp_grpc]
         metrics:
           receivers: [count]
@@ -144,7 +203,9 @@ spec:
       labels:
         app: otel-collector
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: otel-collector
+      # k8sattributes watches pods through the API server.
+      automountServiceAccountToken: true
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
@@ -260,7 +321,7 @@ spec:
 ---
 # Only iron-proxy pods in proxy namespaces send to the Collector, and only on
 # OTLP/HTTPS. The Collector itself reaches only cluster DNS here; the platform's
-# backend policy adds the rest.
+# policies add its backend and the API server.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

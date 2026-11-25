@@ -27,9 +27,9 @@ deploy/demo/down.sh
 | Directory | Holds | Test-only settings |
 |---|---|---|
 | `workspace/`, `namespaces.yaml`, `root-issuer.yaml`, `sandboxes/egress.yaml` | What the controller and platform apply in production. | None. The hosts and credentials in `workspace/config.yaml` are the test pair's rows, as a real pair's rows would be. |
-| `../observability/` | The Collector, as the platform runs it. | None. The platform supplies ConfigMap `otel-backend` (the backend's address and the one CA trusted for it) and the policy to reach its backend. |
+| `../observability/` | The Collector, as the platform runs it. | None. The platform supplies ConfigMap `otel-backend` (the backend's address and the one CA trusted for it) and the policies to reach its backend and the API server. |
 | `test/workspace/` | Overlay on `workspace/`. | moto's endpoint and dummy keys, the fake upstream's CA, and egress to those two in-cluster stand-ins. |
-| `test/observability/` | Overlay on `../observability/`. | Egress to the test backend. `scripts/observability.sh` makes the `otel-backend` ConfigMap with the test backend's address and CA. |
+| `test/observability/` | Overlay on `../observability/`. | Egress to the test backend. `scripts/observability.sh` makes the `otel-backend` ConfigMap with the test backend's address and CA, and the Collector's egress policy to the API server's Service and endpoint addresses. |
 | `fixtures/`, `sandboxes/pods.yaml`, `scripts/` | Stand-ins and the checks. | All of it. |
 
 ## What runs
@@ -40,7 +40,7 @@ deploy/demo/down.sh
 | `ws-demo` | ServiceAccount `iron-proxy`, Certificate `iron-proxy-ca`, ConfigMap `proxy-env-demo-config`, Deployment, Service, NetworkPolicy and HorizontalPodAutoscaler `proxy-env-demo`, NetworkPolicy `default-deny` | The workspace's proxy for `env_Demo01`: stock iron-proxy 0.59.0 pinned by digest, plus a reload watcher. |
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
 | `cert-manager` | Secret and ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
-| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Collector CA `agentd-otel-ca` (namespaced Issuer, apart from the agentd root), Certificate `otel-collector-tls` from it, NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
+| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Collector CA `agentd-otel-ca` (namespaced Issuer, apart from the agentd root), Certificate `otel-collector-tls` from it, ServiceAccount `otel-collector` with ClusterRole `agentd-otel-collector` (read pods only), NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
 | `kube-system` | metrics-server 0.9.1 | Feeds the HorizontalPodAutoscaler. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. Only proxy namespaces reach it. |
 | `upstream` | HTTPS echo server, Service `echo` on external IP `203.0.113.10` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. Only proxy namespaces reach it. |
@@ -53,7 +53,7 @@ deploy/demo/down.sh
 3. The proxy terminates TLS with a leaf certificate signed by the workspace intermediate. The sandbox trusts only the root, and the proxy sends the intermediate with each leaf.
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
 5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name. The test hosts resolve to `203.0.113.10` (TEST-NET-3), an address the deny list allows; kube-proxy forwards it to the echo pod, so the proxy's NetworkPolicy, which refuses documentation ranges, sees the echo pod and the test overlay's egress rule admits it.
-6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. `OTEL_RESOURCE_ATTRIBUTES` puts `agentd.workspace_id` and `agentd.environment_id` on every record.
+6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. The proxy names no workspace: the Collector deletes any `agentd.*` or `k8s.*` resource attribute a record arrives with, then `k8sattributes` finds the sending pod by the connection's source address and sets `agentd.workspace_id` and `agentd.environment_id` from its `agentd.dev/workspace` and `agentd.dev/environment` labels, so a compromised proxy cannot write records under another workspace. The proxy has no API token, so it cannot change its own labels.
 
 ## Network rules
 
@@ -61,17 +61,18 @@ Every namespace the demo owns denies traffic by default and opens only what each
 
 - Sandboxes reach cluster DNS and TCP 8080 in proxy namespaces only.
 - A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), as is every other range IANA marks not globally reachable (all of `2001::/23`), and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
-- The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the backend's policy comes with the backend.
+- The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the platform adds its backend and the API server, which `k8sattributes` watches pods through.
 - `cert-manager` and `kube-system` are installed from their upstream manifests without policies; their policies belong to the platform's install of them.
 
 ## Metrics
 
 iron-proxy 0.59.0 exports audit log records, not metrics. Each record has `action` (`allow`, `reject` or `error`), `rejected_by` on a reject, `method`, and `request_transforms`: a list of `{name, action, duration_ms, annotations}`. The `secrets` transform's annotations hold `swapped` after a swap and `secret_unavailable` when a credential could not be read. The Collector turns them into metrics:
 
+- `transform/drop_sent_ids` deletes every `agentd.*` and `k8s.*` resource attribute a record arrives with, and `k8sattributes` sets the workspace and environment ids, the namespace, the pod name and the pod address from the pod at the connection's source address. It matches on that address only, and reads pods only.
 - `transform/flatten` sets the record attributes `swapped` and `secret_unavailable` to `true` when that annotation is in `request_transforms`.
 - The `count` connector emits `egress_proxy_requests{action, rejected_by, swapped}`, with `rejected_by="none"` when nothing rejected the request. An allowed `CONNECT` only opens a tunnel and is not counted; the request inside it is.
 - It also emits `egress_proxy_secret_failures`, the requests for which a credential could not be read.
-- `transform/drop_tenant_ids` removes the workspace and environment ids from the metrics, so they stay on the logs only.
+- `transform/drop_tenant_ids` removes the `agentd.*` and `k8s.*` attributes from the metrics, since the namespace and pod names carry the workspace id too, so they stay on the logs only.
 - `memory_limiter` and `batch` guard and group both pipelines; the `otlp_grpc` exporter queues and retries for up to 5 minutes when the backend is down.
 
 The counts are delta sums, so a backend adds them up across both replicas.
@@ -86,11 +87,13 @@ The counts are delta sums, so a backend adds them up across both replicas.
 - A labelled pod can connect, and cannot bypass the proxy to the upstream or to the internet (checked against a control request that does reach the internet from outside the sandbox policy).
 - The HorizontalPodAutoscaler targets 1 to 5 replicas on CPU and memory at 70%, and reads live values for both from metrics-server.
 - Deleting the intermediate CA Secret makes cert-manager issue a new one that chains to the root.
-- A ConfigMap change reaches the running proxy through the watcher.
-- A config the proxy rejects is logged at `ERROR` by the watcher, and the proxy keeps serving the last good config, not the startup one.
+- A ConfigMap change reaches every running proxy pod through its watcher, once per pod.
+- A config the proxy rejects is logged at `ERROR` once by each pod's watcher, with the proxy's `422` answer and its reason, and the proxy keeps serving the last good config, not the startup one.
+- Once the last good config is restored, restarted proxy pods start with it and serve.
 - A credential whose secret cannot be read leaves its stand-in in place and the request goes on.
 - `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 3 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts the 1 request whose secret could not be read.
-- The log records carry the workspace and environment ids, and the metrics carry neither. The credential value never reaches the Collector or its backend.
+- The log records carry the workspace and environment ids, and the metrics carry neither, nor the namespace or pod name.
+- A record sent from a proxy pod that names another workspace is stored under the sending pod's workspace, environment, name and address; the forged values reach no record. The credential value never reaches the Collector or its backend.
 - The Collector accepts only TLS: plain HTTP from the proxy gets `400`. A sandbox, and the echo pod, whose own policy lets it reach the Collector's port, cannot connect to it.
 - The Collector's certificate chains to the Collector CA and not to the agentd root; the proxies' OTLP trust is exactly the Collector CA, and the workspace intermediate does not chain to it.
 
@@ -111,8 +114,8 @@ The counts are delta sums, so a backend adds them up across both replicas.
 
 ## Reload watcher
 
-iron-proxy reloads its config on `POST /v1/reload` at the management listener, `127.0.0.1:9092`, with `Authorization: Bearer <IRON_MANAGEMENT_API_KEY>`. Stock `configmap-reload` has no flag for a request header, so the watcher is a shell loop in the same pinned iron-proxy image. It hashes the mounted config every 5 seconds and posts one reload per change. A failed reload is logged at `ERROR` with the proxy's answer; the proxy keeps its running config.
+iron-proxy reloads its config on `POST /v1/reload` at the management listener, `127.0.0.1:9092`, with `Authorization: Bearer <IRON_MANAGEMENT_API_KEY>`. Stock `configmap-reload` has no flag for a request header, so the watcher is a shell loop in the same pinned iron-proxy image. It hashes the mounted config every 5 seconds and posts one reload per change with busybox `nc`, since busybox `wget` drops the body of an error answer. A failed reload is logged at `ERROR` with the HTTP status and the proxy's answer (`422` and the reason for a config it rejects); the proxy keeps its running config.
 
 ## Scripts
 
-`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/install-metrics-server.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/observability.sh`, `scripts/proxy.sh`, `scripts/assert.sh` (it sources `scripts/assert-collector.sh`). The two install scripts and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions, checksums and image digests live in `scripts/lib.sh`; third-party manifests are checked against their checksum and every image in them is pinned by digest before they are applied.
+`up.sh` runs, in order: `scripts/install-cert-manager.sh`, `scripts/install-metrics-server.sh`, `scripts/root-ca.sh`, `scripts/fixtures.sh`, `scripts/observability.sh`, `scripts/proxy.sh`, `scripts/assert.sh` (it sources `scripts/assert-collector.sh` and `scripts/assert-reload.sh`). The two install scripts and `dump.sh` can be rerun on their own; the others create objects once, so rerun them with `down.sh` then `up.sh`. `scripts/dump.sh` prints cluster state, without Secret data. Pinned versions, checksums and image digests live in `scripts/lib.sh`; third-party manifests are checked against their checksum and every image in them is pinned by digest before they are applied.

@@ -24,7 +24,8 @@ EOF
 
 log "root CA"
 (umask 077 && openssl ecparam -name prime256v1 -genkey -noout -out "${work}/ca.key")
-openssl req -x509 -new -key "${work}/ca.key" -sha256 -days 7 \
+# Two years, so the root outlives the 90-day intermediates it issues.
+openssl req -x509 -new -key "${work}/ca.key" -sha256 -days 730 \
   -config "${work}/ca.cnf" -out "${work}/ca.crt"
 
 kubectl apply -f "${DEMO_DIR}/namespaces.yaml"
