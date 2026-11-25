@@ -52,7 +52,7 @@ deploy/demo/down.sh
 2. The allowlist checks the host. A host outside it gets `403`.
 3. The proxy terminates TLS with a leaf certificate signed by the workspace intermediate. The sandbox trusts only the root, and the proxy sends the intermediate with each leaf.
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
-5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name. The test hosts resolve to `203.0.113.10` (TEST-NET-3), a public address the production list allows; kube-proxy forwards it to the echo pod.
+5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name. The test hosts resolve to `203.0.113.10` (TEST-NET-3), an address the deny list allows; kube-proxy forwards it to the echo pod, so the proxy's NetworkPolicy, which refuses documentation ranges, sees the echo pod and the test overlay's egress rule admits it.
 6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. `OTEL_RESOURCE_ATTRIBUTES` puts `agentd.workspace_id` and `agentd.environment_id` on every record.
 
 ## Network rules
@@ -60,7 +60,7 @@ deploy/demo/down.sh
 Every namespace the demo owns denies traffic by default and opens only what each workload needs.
 
 - Sandboxes reach cluster DNS and TCP 8080 in proxy namespaces only.
-- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
+- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), as are the documentation ranges, and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
 - The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the backend's policy comes with the backend.
 - `cert-manager` and `kube-system` are installed from their upstream manifests without policies; their policies belong to the platform's install of them.
 

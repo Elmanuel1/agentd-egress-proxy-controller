@@ -94,6 +94,9 @@ no_credential_exported() {
   local collector backend
   collector="$(kubectl -n observability logs -l app=otel-collector --tail=-1)" || return 1
   backend="$(kubectl -n otel-backend logs deploy/otel-backend)" || return 1
-  [[ -n $backend ]] && ! grep -qF -- "$real" <<<"${collector}${backend}"
+  [[ -n $backend ]] || return 1
+  local rc=0
+  grep -qF -- "$real" <<<"${collector}${backend}" || rc=$?
+  (( rc == 1 )) # 1 is no match; 0 is a match and 2 an error
 }
 check "the credential value never reaches the Collector or its backend" no_credential_exported
