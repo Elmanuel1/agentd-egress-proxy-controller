@@ -10,10 +10,10 @@ Needs Docker with about 4 GB of memory free, kind, kubectl, openssl, jq and curl
 deploy/demo/up.sh
 ```
 
-`up.sh` creates the kind cluster `epc-demo`, installs everything below and runs the checks, in about five minutes. It writes the cluster's kubeconfig to `~/.cache/epc-demo/kubeconfig` (or `$EPC_DEMO_KUBECONFIG`) and never changes your current kubectl context. To look around afterwards:
+`up.sh` creates the kind cluster `epc-demo`, installs everything below and runs the checks, in about five minutes. It writes the cluster's kubeconfig to `$EPC_DEMO_KUBECONFIG`, else `${XDG_CACHE_HOME:-~/.cache}/epc-demo/kubeconfig`, and never changes your current kubectl context. To look around afterwards:
 
 ```bash
-export KUBECONFIG=~/.cache/epc-demo/kubeconfig
+export KUBECONFIG="${EPC_DEMO_KUBECONFIG:-${XDG_CACHE_HOME:-$HOME/.cache}/epc-demo/kubeconfig}"
 ```
 
 Delete the cluster with:
@@ -60,7 +60,7 @@ deploy/demo/down.sh
 Every namespace the demo owns denies traffic by default and opens only what each workload needs.
 
 - Sandboxes reach cluster DNS and TCP 8080 in proxy namespaces only.
-- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; private and link-local ranges are refused, and `upstream_deny_cidrs` decides per dial within what is left. The test overlay adds moto and the echo pod.
+- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
 - The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the backend's policy comes with the backend.
 - `cert-manager` and `kube-system` are installed from their upstream manifests without policies; their policies belong to the platform's install of them.
 
@@ -91,7 +91,7 @@ The counts are delta sums, so a backend adds them up across both replicas.
 - A credential whose secret cannot be read leaves its stand-in in place and the request goes on.
 - `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 3 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts the 1 request whose secret could not be read.
 - The log records carry the workspace and environment ids, and the metrics carry neither. The credential value never reaches the Collector or its backend.
-- The Collector accepts only TLS: plain HTTP from the proxy gets `400`. A sandbox, and a pod with open egress that is not an iron-proxy pod, cannot connect to it.
+- The Collector accepts only TLS: plain HTTP from the proxy gets `400`. A sandbox, and the echo pod, whose own policy lets it reach the Collector's port, cannot connect to it.
 - The Collector's certificate chains to the Collector CA and not to the agentd root; the proxies' OTLP trust is exactly the Collector CA, and the workspace intermediate does not chain to it.
 
 ## Not shown here

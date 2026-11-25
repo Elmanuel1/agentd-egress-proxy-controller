@@ -17,7 +17,8 @@ spec:
 # and management ports, is refused. An unlabelled sandbox reaches no proxy.
 # The proxy reaches cluster DNS, the Collector, the EKS Pod Identity agent for
 # its AWS credentials, and public addresses; upstream_deny_cidrs then decides
-# per dial. Private and link-local ranges are refused here as well.
+# per dial. Every range upstream_deny_cidrs names is refused here as well; for
+# 6to4 that is all of 2002::/16.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -78,7 +79,10 @@ spec:
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except: ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]
+            except: ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+                     "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15",
+                     "224.0.0.0/4", "240.0.0.0/4"]
         - ipBlock:
             cidr: ::/0
-            except: ["fc00::/7", "fe80::/10"]
+            except: ["::/96", "64:ff9b::/96", "64:ff9b:1::/48", "fc00::/7", "fe80::/10", "ff00::/8",
+                     "2002::/16"]

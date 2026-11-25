@@ -12,7 +12,7 @@ try: socket.create_connection(("otel-collector.observability.svc.cluster.local",
 except (TimeoutError, ConnectionRefusedError): sys.exit(3)' || rc=$?
   (( rc == 3 ))
 }
-check "a pod with open egress, not an iron-proxy pod, cannot reach the Collector" collector_refused
+check "the echo pod, allowed out to the Collector port but not an iron-proxy pod, cannot reach the Collector" collector_refused
 # wget exits non-zero on the 400 that Go's TLS server sends a plain HTTP request.
 plain_http_refused() {
   local out
@@ -38,15 +38,24 @@ check "the Collector's certificate chains to the Collector CA" \
   openssl verify -CAfile "${work}/otlp-ca.crt" "${work}/otlp-server.crt"
 check "the Collector's certificate does not chain to the agentd root" not_signed_by otlp-root.crt otlp-server.crt
 fingerprint() { openssl x509 -noout -fingerprint -sha256 -in "${work}/$1"; }
-same_cert() { [[ -n $(fingerprint "$1") && $(fingerprint "$1") == "$(fingerprint "$2")" ]]; }
-check "the proxies' OTLP trust (ConfigMap otel-ca) is the Collector CA" same_cert otlp-ca.crt otlp-trusted.crt
+# openssl reads only a file's first certificate, so <trusted> must hold exactly one.
+only_cert_is() { # <ca> <trusted>
+  [[ $(grep -c -- '-----BEGIN CERTIFICATE-----' "${work}/$2") == 1 ]] \
+    && [[ -n $(fingerprint "$1") && $(fingerprint "$1") == "$(fingerprint "$2")" ]]
+}
+check "the proxies' OTLP trust (ConfigMap otel-ca) is the Collector CA alone" only_cert_is otlp-ca.crt otlp-trusted.crt
 check "control: the workspace intermediate chains to the agentd root" \
   openssl verify -CAfile "${work}/otlp-root.crt" "${work}/otlp-intermediate.crt"
 check "nothing the workspace intermediate signs chains to the proxies' OTLP trust" \
   not_signed_by otlp-trusted.crt otlp-intermediate.crt
 
 log "the Collector counts the requests above from the proxy's OTLP audit records"
-collector_out() { kubectl -n otel-backend logs deploy/otel-backend | grep '^{"resource' || true; }
+# Fails when the backend's log cannot be read, so no check passes on empty input.
+collector_out() {
+  local out
+  out="$(kubectl -n otel-backend logs deploy/otel-backend)" || return 1
+  grep '^{"resource' <<<"$out" || true
+}
 # counts <metric>: the metric's total per label set, as {"action=..,rejected_by=..,swapped=..": n}.
 counts() {
   collector_out | jq -sc --arg m "$1" '[.[].resourceMetrics[]?.scopeMetrics[].metrics[]
@@ -76,12 +85,15 @@ logs_carry_ids() {
 }
 check "log records carry the workspace and environment ids" logs_carry_ids
 metrics_lack_ids() {
-  collector_out | jq -se '[.[].resourceMetrics[]? | .. | objects | .key? // empty
-      | select(. == "agentd.workspace_id" or . == "agentd.environment_id")] | length == 0' >/dev/null
+  collector_out | jq -se '[.[].resourceMetrics[]?] as $m | ($m | length > 0)
+    and ([$m[] | .. | objects | .key? // empty
+      | select(. == "agentd.workspace_id" or . == "agentd.environment_id")] | length == 0)' >/dev/null
 }
 check "no workspace or environment id on the metrics" metrics_lack_ids
 no_credential_exported() {
-  ! { kubectl -n observability logs -l app=otel-collector --tail=-1
-    kubectl -n otel-backend logs deploy/otel-backend; } | grep -qF -- "$real"
+  local collector backend
+  collector="$(kubectl -n observability logs -l app=otel-collector --tail=-1)" || return 1
+  backend="$(kubectl -n otel-backend logs deploy/otel-backend)" || return 1
+  [[ -n $backend ]] && ! grep -qF -- "$real" <<<"${collector}${backend}"
 }
 check "the credential value never reaches the Collector or its backend" no_credential_exported

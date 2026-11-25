@@ -10,9 +10,10 @@ kubectl -n otel-backend rollout status deploy/otel-backend --timeout=180s
 
 log "Collector (deploy/observability) with the test backend's ConfigMap and policy"
 kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+backend_ca="$(secret_pem otel-backend otel-backend-tls ca.crt)"
 kubectl -n observability create configmap otel-backend \
   --from-literal=endpoint=otel-backend.otel-backend.svc.cluster.local:4317 \
-  --from-literal=ca.crt="$(kubectl -n otel-backend get secret otel-backend-tls -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+  --from-literal=ca.crt="$backend_ca"
 kubectl apply -k "${DEMO_DIR}/test/observability"
 kubectl -n observability wait certificate/agentd-otel-ca --for=condition=Ready --timeout=120s
 kubectl -n observability wait issuer/agentd-otel-ca --for=condition=Ready --timeout=60s

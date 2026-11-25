@@ -18,8 +18,8 @@ printf '{"secret_value":"%s"}' "$value" \
   | kubectl -n moto exec -i deploy/moto -- python3 -c "$(cat "${DEMO_DIR}/scripts/secrets-manager.py")" create "$SECRET_ID"
 
 log "fake upstream's CA, for the proxy only"
-kubectl -n ws-demo create configmap upstream-ca \
-  --from-literal=ca.crt="$(kubectl -n upstream get secret upstream-ca -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+upstream_ca="$(secret_pem upstream upstream-ca ca.crt)"
+kubectl -n ws-demo create configmap upstream-ca --from-literal=ca.crt="$upstream_ca"
 
 log "the upstream's names resolve to its external IP; metadata.demo.test to 169.254.169.254"
 corefile="$(kubectl -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}')"

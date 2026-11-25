@@ -52,6 +52,15 @@ fetch_manifest() {
   fi
 }
 
+# secret_pem <namespace> <secret> <key>: prints the certificate held in the
+# Secret's key; fails if the read fails or the key holds no certificate.
+secret_pem() {
+  local pem
+  pem="$(kubectl -n "$1" get secret "$2" -o jsonpath="{.data.${3//./\\.}}" | base64 -d)"
+  openssl x509 -noout <<<"$pem" 2>/dev/null || fail "no certificate in secret $1/$2 key $3" >&2
+  printf '%s\n' "$pem"
+}
+
 # retry <attempts> <delay seconds> <command...>
 retry() {
   local attempts=$1 delay=$2 n=1
