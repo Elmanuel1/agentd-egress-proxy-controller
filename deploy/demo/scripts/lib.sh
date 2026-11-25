@@ -56,7 +56,8 @@ fetch_manifest() {
 # Secret's key; fails if the read fails or the key holds no certificate.
 secret_pem() {
   local pem
-  pem="$(kubectl -n "$1" get secret "$2" -o jsonpath="{.data.${3//./\\.}}" | base64 -d)"
+  pem="$(kubectl -n "$1" get secret "$2" -o jsonpath="{.data.${3//./\\.}}" | base64 -d)" \
+    || fail "could not read secret $1/$2 key $3" >&2
   openssl x509 -noout <<<"$pem" 2>/dev/null || fail "no certificate in secret $1/$2 key $3" >&2
   printf '%s\n' "$pem"
 }

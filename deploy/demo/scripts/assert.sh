@@ -21,24 +21,26 @@ check() { # <name> <command...>
     printf 'PASS %s\n' "$name"
   else
     if ci; then printf '::error::'; fi
-    printf 'FAIL %s (codes="%s" tcp=%s curl exit=%s)\n' "$name" "${CODES:-}" "${TCP:-}" "${RC:-}"
+    printf 'FAIL %s (codes="%s" dns=%s tcp=%s curl exit=%s)\n' "$name" "${CODES:-}" "${DNS:-}" "${TCP:-}" "${RC:-}"
     failures=$((failures + 1))
   fi
 }
 
 # via <pod> <url> [curl args...]
 # Requests <url> from a sandbox pod through the proxy. Sets BODY, CODES
-# ("<CONNECT status> <HTTP status>", 000 when there was none), TCP (seconds to
-# the first TCP connect, 0 when none completed) and RC (curl's exit code).
+# ("<CONNECT status> <HTTP status>", 000 when there was none), DNS and TCP
+# (seconds to the name lookup and to the TCP connect, 0 when that step did not
+# complete) and RC (curl's exit code).
 via() {
   local pod=$1 url=$2 out
   shift 2
   RC=0
   out="$(kubectl -n sandboxes exec "$pod" -- curl -sS --connect-timeout 5 --max-time 20 \
     --proxy "$PROXY" --cacert /etc/agentd-ca/ca.crt \
-    -w '\n%{http_connect} %{http_code} %{time_connect}' ${@+"$@"} "$url")" || RC=$?
+    -w '\n%{http_connect} %{http_code} %{time_namelookup} %{time_connect}' ${@+"$@"} "$url")" || RC=$?
   CODES="$(tail -n 1 <<<"$out" | cut -d ' ' -f 1,2)"
-  TCP="$(tail -n 1 <<<"$out" | cut -d ' ' -f 3)"
+  DNS="$(tail -n 1 <<<"$out" | cut -d ' ' -f 3)"
+  TCP="$(tail -n 1 <<<"$out" | cut -d ' ' -f 4)"
   BODY="$(sed '$d' <<<"$out")"
 }
 
@@ -46,9 +48,11 @@ via() {
 header_sha() { jq -r --arg h "$1" '.header_sha256[$h] // empty' <<<"$BODY"; }
 sha() { printf '%s' "$1" | shasum -a 256 | cut -d ' ' -f 1; }
 refused_at_connect() { [[ $CODES == 403\ * ]] && (( RC != 0 )); }
-# A timeout counts only when no TCP connection completed, so a stalled TLS
-# handshake or a name that fails to resolve (curl exit 6) is not a refusal.
-no_connection() { [[ $CODES == "000 000" && $TCP == 0.000000 ]] && (( RC == 7 || RC == 28 )); }
+# Refused or timed out at TCP, after the name resolved: a stalled TLS handshake,
+# a failed lookup (exit 6) or a lookup that timed out (exit 28) is not a refusal.
+no_connection() {
+  [[ $CODES == "000 000" && $DNS != 0.000000 && $TCP == 0.000000 ]] && (( RC == 7 || RC == 28 ))
+}
 
 real="$(kubectl -n moto exec deploy/moto -- python3 -c "$(cat "${DEMO_DIR}/scripts/secrets-manager.py")" get "$SECRET_ID" \
   | jq -r .secret_value)"
