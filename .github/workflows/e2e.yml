@@ -1,0 +1,38 @@
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    name: egress proxy demo on kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install kind
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.33.0
+          install_only: true
+
+      # The same script runs the demo on a laptop (deploy/demo/README.md).
+      - name: Build the demo on kind and run the checks
+        run: deploy/demo/up.sh
+
+      - name: Cluster state
+        if: failure()
+        run: deploy/demo/scripts/dump.sh

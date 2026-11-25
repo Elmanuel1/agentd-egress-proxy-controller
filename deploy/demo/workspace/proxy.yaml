@@ -1,0 +1,201 @@
+# The proxy for (wrk_Demo01, env_Demo01): Deployment, Service and
+# HorizontalPodAutoscaler, as the controller writes them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels: &labels
+    app.kubernetes.io/name: iron-proxy
+    app.kubernetes.io/instance: proxy-env-demo
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  # No replicas field: the HorizontalPodAutoscaler owns the count.
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: iron-proxy
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: iron-proxy
+          image: docker.io/ironsh/iron-proxy:0.59.0@sha256:30824bb4b8ba0703bd1acfe57e6ba2fb8dde041387df7a1fc776a807e3f111f5
+          args: ["--config", "/etc/iron-proxy/config/proxy.yaml"]
+          ports:
+            - name: tunnel
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: IRON_MANAGEMENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: iron-proxy-management
+                  key: api-key
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: https://otel-collector.observability:4318
+            # The Collector CA only: a workspace intermediate cannot sign a
+            # certificate the proxy accepts for the Collector.
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: /etc/otel-ca/ca.crt
+            # No workspace or environment id: the Collector reads them from
+            # this pod's labels.
+          readinessProbe:
+            tcpSocket:
+              port: tunnel
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/iron-proxy/config
+              readOnly: true
+            - name: ca
+              mountPath: /etc/iron-proxy/ca
+              readOnly: true
+            - name: otel-ca
+              mountPath: /etc/otel-ca
+              readOnly: true
+        # Stock configmap-reload cannot send the bearer key the management API
+        # requires, so this is the same loop in the pinned iron-proxy image,
+        # using its busybox sh and nc. busybox wget drops the body of an error
+        # answer, which holds the proxy's reason for rejecting a config.
+        - name: config-reload
+          image: docker.io/ironsh/iron-proxy:0.59.0@sha256:30824bb4b8ba0703bd1acfe57e6ba2fb8dde041387df7a1fc776a807e3f111f5
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cfg=/etc/iron-proxy/config/proxy.yaml
+              last=$(sha256sum "$cfg")
+              while sleep 5; do
+                now=$(sha256sum "$cfg") || continue
+                [ "$now" = "$last" ] && continue
+                last=$now
+                answer=$(printf 'POST /v1/reload HTTP/1.0\r\nAuthorization: Bearer %s\r\nContent-Length: 0\r\n\r\n' \
+                  "$IRON_MANAGEMENT_API_KEY" | nc -w 10 127.0.0.1 9092 2>&1 | tr -d '\r')
+                status=$(echo "$answer" | head -n 1 | cut -d ' ' -f 2)
+                [ "$status" = 200 ] && { echo 'level=INFO msg="iron-proxy reloaded"'; continue; }
+                echo "level=ERROR msg=\"iron-proxy reload failed\" status=${status:-none} answer=\"$(echo "$answer" | tail -n 1 | tr '"' "'")\""
+              done
+          env:
+            - name: IRON_MANAGEMENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: iron-proxy-management
+                  key: api-key
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/iron-proxy/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: proxy-env-demo-config
+        - name: ca
+          secret:
+            secretName: iron-proxy-ca
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        # The controller copies the Collector CA certificate into each workspace
+        # namespace as ConfigMap otel-ca.
+        - name: otel-ca
+          configMap:
+            name: otel-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/name: iron-proxy
+    app.kubernetes.io/instance: proxy-env-demo
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  selector:
+    app.kubernetes.io/instance: proxy-env-demo
+  ports:
+    - name: tunnel
+      port: 8080
+      targetPort: tunnel
+      protocol: TCP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: proxy-env-demo
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70

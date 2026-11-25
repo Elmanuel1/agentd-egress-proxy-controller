@@ -1,0 +1,9 @@
+# Test-only settings on top of the controller's manifests (deploy/demo/workspace).
+# Nothing here exists in production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../workspace
+  - fixtures-egress.yaml
+patches:
+  - path: proxy-stand-ins.yaml

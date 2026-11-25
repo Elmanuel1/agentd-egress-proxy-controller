@@ -1,0 +1,40 @@
+# The workspace's proxy identity and intermediate CA, made once per workspace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iron-proxy
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+automountServiceAccountToken: false
+---
+# cert-manager issues this intermediate from the root ClusterIssuer, renews it,
+# and reissues its Secret if the Secret is deleted. The proxy signs leaf
+# certificates with it; sandboxes trust only the root.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: iron-proxy-ca
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+spec:
+  isCA: true
+  commonName: agentd proxy CA wrk_Demo01
+  secretName: iron-proxy-ca
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - cert sign
+    - crl sign
+    - digital signature
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: agentd-root-ca

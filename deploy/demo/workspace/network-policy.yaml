@@ -1,0 +1,94 @@
+# Network rules for workspace wrk_Demo01, as the controller writes them: the
+# namespace denies all traffic by default, and each proxy gets its own policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# Only sandbox pods labelled with this workspace and environment reach the
+# proxy, and only on the tunnel port. Everything else, including the metrics
+# and management ports, is refused. An unlabelled sandbox reaches no proxy.
+# The proxy reaches cluster DNS, the Collector, the EKS Pod Identity agent for
+# its AWS credentials, and public addresses; upstream_deny_cidrs then decides
+# per dial. Every range upstream_deny_cidrs names is refused here as well (for
+# 6to4, all of 2002::/16), and so is every other range the IANA special-purpose
+# registries mark not globally reachable. 2001::/23 is refused whole, including
+# its few global protocol assignments, which a proxy has no use for. ::/80
+# covers ::/96 and the IPv4-mapped ::ffff:0:0/96, which the API server refuses
+# to take as written.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-env-demo
+  namespace: ws-demo
+  labels:
+    app.kubernetes.io/managed-by: agentd-egress-proxy-controller
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: proxy-env-demo
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandboxes
+          podSelector:
+            matchLabels:
+              agentd.dev/workspace: wrk_Demo01
+              agentd.dev/environment: env_Demo01
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - port: 4318
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 169.254.170.23/32
+        - ipBlock:
+            cidr: fd00:ec2::23/128
+      ports:
+        - port: 80
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+                     "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16",
+                     "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4",
+                     "240.0.0.0/4"]
+        - ipBlock:
+            cidr: ::/0
+            except: ["::/80", "64:ff9b::/96", "64:ff9b:1::/48", "fc00::/7", "fe80::/10", "ff00::/8",
+                     "100::/63", "2001::/23", "2001:db8::/32", "2002::/16",
+                     "3fff::/20", "5f00::/16"]

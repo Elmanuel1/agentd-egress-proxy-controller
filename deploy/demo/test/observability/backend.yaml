@@ -1,0 +1,20 @@
+# ConfigMap otel-backend is made by scripts/observability.sh, with the test
+# backend's CA from its certificate Secret.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-backend
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app: otel-collector
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: otel-backend
+      ports:
+        - port: 4317
+          protocol: TCP

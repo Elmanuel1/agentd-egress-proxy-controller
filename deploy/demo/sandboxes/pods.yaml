@@ -1,0 +1,134 @@
+# Three sandbox stand-ins. In production the controller adds the workspace and
+# environment labels to a session's sandbox pod; here they are fixed:
+#   sandbox-labelled    this proxy's workspace and environment: may connect
+#   sandbox-unlabelled  no labels: reaches no proxy
+#   sandbox-other-env   same workspace, another environment: refused
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sandbox-labelled
+  namespace: sandboxes
+  labels:
+    anthropic.com/role: sandbox
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Demo01
+spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sandbox
+      image: docker.io/curlimages/curl:8.15.0@sha256:4026b29997dc7c823b51c164b71e2b51e0fd95cce4601f78202c513d97da2922
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: agentd-ca
+          mountPath: /etc/agentd-ca
+          readOnly: true
+  volumes:
+    # The root certificate only; a sandbox never holds a CA private key.
+    - name: agentd-ca
+      configMap:
+        name: agentd-root-ca
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sandbox-unlabelled
+  namespace: sandboxes
+  labels:
+    anthropic.com/role: sandbox
+spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sandbox
+      image: docker.io/curlimages/curl:8.15.0@sha256:4026b29997dc7c823b51c164b71e2b51e0fd95cce4601f78202c513d97da2922
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: agentd-ca
+          mountPath: /etc/agentd-ca
+          readOnly: true
+  volumes:
+    # The root certificate only; a sandbox never holds a CA private key.
+    - name: agentd-ca
+      configMap:
+        name: agentd-root-ca
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sandbox-other-env
+  namespace: sandboxes
+  labels:
+    anthropic.com/role: sandbox
+    agentd.dev/workspace: wrk_Demo01
+    agentd.dev/environment: env_Other01
+spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sandbox
+      image: docker.io/curlimages/curl:8.15.0@sha256:4026b29997dc7c823b51c164b71e2b51e0fd95cce4601f78202c513d97da2922
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: agentd-ca
+          mountPath: /etc/agentd-ca
+          readOnly: true
+  volumes:
+    # The root certificate only; a sandbox never holds a CA private key.
+    - name: agentd-ca
+      configMap:
+        name: agentd-root-ca
