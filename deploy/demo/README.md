@@ -60,7 +60,7 @@ deploy/demo/down.sh
 Every namespace the demo owns denies traffic by default and opens only what each workload needs.
 
 - Sandboxes reach cluster DNS and TCP 8080 in proxy namespaces only.
-- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), as are the documentation ranges, and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
+- A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), as is every other range IANA marks not globally reachable (all of `2001::/23`), and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
 - The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the backend's policy comes with the backend.
 - `cert-manager` and `kube-system` are installed from their upstream manifests without policies; their policies belong to the platform's install of them.
 
