@@ -15,7 +15,7 @@ kubectl -n observability create configmap otel-backend \
   --from-literal=endpoint=otel-backend.otel-backend.svc.cluster.local:4317 \
   --from-literal=ca.crt="$backend_ca"
 # The platform's policy for the Collector to reach the API server, which
-# k8sattributes watches pods through. Its addresses are known only once the
+# k8s_attributes watches pods through. Its addresses are known only once the
 # cluster runs: the Service address, and the endpoint kube-proxy sends it to.
 ipv4() { [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 api_service="$(kubectl -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')"

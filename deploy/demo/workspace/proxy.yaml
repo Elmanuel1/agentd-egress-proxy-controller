@@ -107,11 +107,8 @@ spec:
                 answer=$(printf 'POST /v1/reload HTTP/1.0\r\nAuthorization: Bearer %s\r\nContent-Length: 0\r\n\r\n' \
                   "$IRON_MANAGEMENT_API_KEY" | nc -w 10 127.0.0.1 9092 2>&1 | tr -d '\r')
                 status=$(echo "$answer" | head -n 1 | cut -d ' ' -f 2)
-                if [ "$status" = 200 ]; then
-                  echo 'level=INFO msg="iron-proxy reloaded"'
-                else
-                  echo "level=ERROR msg=\"iron-proxy reload failed\" status=${status:-none} answer=\"$(echo "$answer" | tail -n 1 | tr '"' "'")\""
-                fi
+                [ "$status" = 200 ] && { echo 'level=INFO msg="iron-proxy reloaded"'; continue; }
+                echo "level=ERROR msg=\"iron-proxy reload failed\" status=${status:-none} answer=\"$(echo "$answer" | tail -n 1 | tr '"' "'")\""
               done
           env:
             - name: IRON_MANAGEMENT_API_KEY

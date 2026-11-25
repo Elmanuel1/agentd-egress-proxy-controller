@@ -70,7 +70,7 @@ kubectl replace -f "${work}/good-config.json"
 kubectl -n ws-demo rollout restart deploy/proxy-env-demo
 check "proxy pods restarted on the restored config become ready (within 180 s)" \
   kubectl -n ws-demo rollout status deploy/proxy-env-demo --timeout=180s
-via sandbox-labelled "$BLOCKED"
-check "restarted proxy serves blocked.upstream.test from the restored config" test "$CODES" = "200 200"
-via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"
-check "restarted proxy swaps the stand-in" test "$(header_sha x-api-key)" = "$(sha "$real")"
+# kindnet takes a few seconds to admit the new pods' addresses.
+check "restarted proxy serves blocked.upstream.test from the restored config (within 60 s)" retry 12 5 blocked_allowed
+restarted_swaps() { via sandbox-labelled "$API" -H "X-Api-Key: ${STAND_IN}"; [[ $(header_sha x-api-key) == "$(sha "$real")" ]]; }
+check "restarted proxy swaps the stand-in (within 60 s)" retry 12 5 restarted_swaps

@@ -6,7 +6,7 @@
 # annotations hold `swapped` and `secret_unavailable` when they apply; a
 # required secret that cannot be read sets `reject_reason: secret_unavailable`.
 # The Collector sets each record's workspace and environment ids itself, from
-# the labels of the pod that sent it (k8sattributes, matched on the connection's
+# the labels of the pod that sent it (k8s_attributes, matched on the connection's
 # source address), after deleting any the sender supplied, so a proxy cannot
 # write records under another workspace. The ids stay on the logs and are
 # removed from the metrics.
@@ -28,7 +28,7 @@ metadata:
   namespace: observability
 automountServiceAccountToken: false
 ---
-# k8sattributes reads pods only: no namespaces, nodes or ReplicaSets, and no write.
+# k8s_attributes reads pods only: no namespaces, nodes or ReplicaSets, and no write.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -106,10 +106,15 @@ data:
         error_mode: propagate
         log_statements:
           - delete_matching_keys(resource.attributes, "^(agentd|k8s)[.]")
+          - delete_matching_keys(scope.attributes, "^(agentd|k8s)[.]")
+          - delete_matching_keys(log.attributes, "^(agentd|k8s)[.]")
       # Matches on the connection's source address only, never on attributes
-      # the sender supplied.
-      k8sattributes:
+      # the sender supplied. A replica starts only once its pod cache has
+      # synced, so no record leaves it without the ids.
+      k8s_attributes:
         auth_type: serviceAccount
+        wait_for_metadata: true
+        wait_for_metadata_timeout: 60s
         filter:
           labels:
             - key: app.kubernetes.io/name
@@ -175,7 +180,7 @@ data:
       pipelines:
         logs:
           receivers: [otlp]
-          processors: [memory_limiter, transform/drop_sent_ids, k8sattributes, transform/flatten, batch]
+          processors: [memory_limiter, transform/drop_sent_ids, k8s_attributes, transform/flatten, batch]
           exporters: [count, otlp_grpc]
         metrics:
           receivers: [count]
@@ -204,7 +209,7 @@ spec:
         app: otel-collector
     spec:
       serviceAccountName: otel-collector
-      # k8sattributes watches pods through the API server.
+      # k8s_attributes watches pods through the API server.
       automountServiceAccountToken: true
       enableServiceLinks: false
       securityContext:

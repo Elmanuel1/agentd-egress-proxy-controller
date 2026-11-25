@@ -53,7 +53,7 @@ deploy/demo/down.sh
 3. The proxy terminates TLS with a leaf certificate signed by the workspace intermediate. The sandbox trusts only the root, and the proxy sends the intermediate with each leaf.
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
 5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name. The test hosts resolve to `203.0.113.10` (TEST-NET-3), an address the deny list allows; kube-proxy forwards it to the echo pod, so the proxy's NetworkPolicy, which refuses documentation ranges, sees the echo pod and the test overlay's egress rule admits it.
-6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. The proxy names no workspace: the Collector deletes any `agentd.*` or `k8s.*` resource attribute a record arrives with, then `k8sattributes` finds the sending pod by the connection's source address and sets `agentd.workspace_id` and `agentd.environment_id` from its `agentd.dev/workspace` and `agentd.dev/environment` labels, so a compromised proxy cannot write records under another workspace. The proxy has no API token, so it cannot change its own labels.
+6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. The proxy names no workspace: the Collector deletes any `agentd.*` or `k8s.*` attribute a record arrives with, then `k8s_attributes` finds the sending pod by the connection's source address and sets `agentd.workspace_id` and `agentd.environment_id` from its `agentd.dev/workspace` and `agentd.dev/environment` labels, so a compromised proxy cannot write records under another workspace. The proxy has no API token, so it cannot change its own labels.
 
 ## Network rules
 
@@ -61,14 +61,14 @@ Every namespace the demo owns denies traffic by default and opens only what each
 
 - Sandboxes reach cluster DNS and TCP 8080 in proxy namespaces only.
 - A proxy admits only its labelled sandboxes on 8080. It reaches cluster DNS, the Collector on 4318, the EKS Pod Identity agent (`169.254.170.23` and `fd00:ec2::23` on 80) for its AWS credentials, and public addresses; every range `upstream_deny_cidrs` names is refused here too (all of `2002::/16` for 6to4), as is every other range IANA marks not globally reachable (all of `2001::/23`), and the deny list decides per dial within what is left. The test overlay adds moto and the echo pod.
-- The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the platform adds its backend and the API server, which `k8sattributes` watches pods through.
+- The Collector admits iron-proxy pods from proxy namespaces on 4318 and reaches cluster DNS; the platform adds its backend and the API server, which `k8s_attributes` watches pods through.
 - `cert-manager` and `kube-system` are installed from their upstream manifests without policies; their policies belong to the platform's install of them.
 
 ## Metrics
 
 iron-proxy 0.59.0 exports audit log records, not metrics. Each record has `action` (`allow`, `reject` or `error`), `rejected_by` on a reject, `method`, and `request_transforms`: a list of `{name, action, duration_ms, annotations}`. The `secrets` transform's annotations hold `swapped` after a swap and `secret_unavailable` when a credential could not be read. The Collector turns them into metrics:
 
-- `transform/drop_sent_ids` deletes every `agentd.*` and `k8s.*` resource attribute a record arrives with, and `k8sattributes` sets the workspace and environment ids, the namespace, the pod name and the pod address from the pod at the connection's source address. It matches on that address only, and reads pods only.
+- `transform/drop_sent_ids` deletes every `agentd.*` and `k8s.*` attribute a record arrives with, on its resource, its scope and the record itself, and `k8s_attributes` sets the workspace and environment ids, the namespace and the pod name from the pod at the connection's source address. It matches on that address only, reads pods only, and a replica starts only once its pod cache has synced.
 - `transform/flatten` sets the record attributes `swapped` and `secret_unavailable` to `true` when that annotation is in `request_transforms`.
 - The `count` connector emits `egress_proxy_requests{action, rejected_by, swapped}`, with `rejected_by="none"` when nothing rejected the request. An allowed `CONNECT` only opens a tunnel and is not counted; the request inside it is.
 - It also emits `egress_proxy_secret_failures`, the requests for which a credential could not be read.
@@ -93,7 +93,7 @@ The counts are delta sums, so a backend adds them up across both replicas.
 - A credential whose secret cannot be read leaves its stand-in in place and the request goes on.
 - `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 3 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts the 1 request whose secret could not be read.
 - The log records carry the workspace and environment ids, and the metrics carry neither, nor the namespace or pod name.
-- A record sent from a proxy pod that names another workspace is stored under the sending pod's workspace, environment, name and address; the forged values reach no record. The credential value never reaches the Collector or its backend.
+- A record sent from a proxy pod that names another workspace is stored under the sending pod's workspace, environment and name; the forged ids, namespace and address reach no attribute. The credential value never reaches the Collector or its backend.
 - The Collector accepts only TLS: plain HTTP from the proxy gets `400`. A sandbox, and the echo pod, whose own policy lets it reach the Collector's port, cannot connect to it.
 - The Collector's certificate chains to the Collector CA and not to the agentd root; the proxies' OTLP trust is exactly the Collector CA, and the workspace intermediate does not chain to it.
 

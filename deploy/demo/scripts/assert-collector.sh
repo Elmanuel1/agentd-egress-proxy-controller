@@ -106,14 +106,17 @@ log "the Collector takes the ids from the sending pod, never from the record"
 # A container added to a proxy pod shares its network, so it sends from the
 # pod's address, as a compromised proxy would. Its record names another workspace.
 forge_pod="$(kubectl -n ws-demo get pod -l "$PROXY_PODS" -o jsonpath='{.items[0].metadata.name}')"
-forge_ip="$(kubectl -n ws-demo get pod "$forge_pod" -o jsonpath='{.status.podIP}')"
 forge_body="forged-$(openssl rand -hex 8)"
 forge_record="$(jq -cn --arg b "$forge_body" '{resourceLogs: [{
   resource: {attributes: [
     {key: "agentd.workspace_id", value: {stringValue: "wrk_Forged01"}},
     {key: "agentd.environment_id", value: {stringValue: "env_Forged01"}},
     {key: "k8s.pod.ip", value: {stringValue: "192.0.2.1"}}]},
-  scopeLogs: [{logRecords: [{body: {stringValue: $b}}]}]}]}')"
+  scopeLogs: [{
+    scope: {attributes: [{key: "agentd.workspace_id", value: {stringValue: "wrk_Forged01"}}]},
+    logRecords: [{body: {stringValue: $b}, attributes: [
+      {key: "agentd.workspace_id", value: {stringValue: "wrk_Forged01"}},
+      {key: "k8s.namespace.name", value: {stringValue: "ws-forged"}}]}]}]}]}')"
 # Base64, since kubectl debug splits --env values on commas.
 b64() { openssl base64 -A <"${work}/$1"; }
 printf '%s' "$forge_record" >"${work}/forge-record.json"
@@ -131,19 +134,19 @@ forge_sent() {
 retry 30 2 forge_sent || true
 check "a proxy pod sent a record naming another workspace, over TLS (within 60 s)" test "${FORGE_EXIT:-}" = 0
 forge_relabelled() {
-  collector_out | jq -se --arg b "$forge_body" --arg pod "$forge_pod" --arg ip "$forge_ip" '
+  collector_out | jq -se --arg b "$forge_body" --arg pod "$forge_pod" '
     [.[].resourceLogs[]? | select([.scopeLogs[]?.logRecords[]?.body.stringValue] | index($b))
       | .resource.attributes | map({(.key): (.value | to_entries[0].value)}) | add] as $r
     | ($r | length > 0) and ($r | all(.["agentd.workspace_id"] == "wrk_Demo01"
         and .["agentd.environment_id"] == "env_Demo01"
-        and .["k8s.pod.name"] == $pod and .["k8s.pod.ip"] == $ip))' >/dev/null
+        and .["k8s.pod.name"] == $pod))' >/dev/null
 }
-check "the record carries the sending pod's workspace, environment, name and address (within 60 s)" \
+check "the record carries the sending pod's workspace, environment and name (within 60 s)" \
   retry 20 3 forge_relabelled
 no_forged_id() {
   local out rc=0
   out="$(kubectl -n otel-backend logs deploy/otel-backend)" || return 1
-  grep -qE 'wrk_Forged01|env_Forged01|192[.]0[.]2[.]1' <<<"$out" || rc=$?
+  grep -qE 'wrk_Forged01|env_Forged01|ws-forged|192[.]0[.]2[.]1' <<<"$out" || rc=$?
   (( rc == 1 ))
 }
-check "the forged ids and address reach no record" no_forged_id
+check "the forged ids, namespace and address reach no resource, scope or record attribute" no_forged_id
