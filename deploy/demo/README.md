@@ -39,8 +39,8 @@ deploy/demo/down.sh
 | `org-demo` | NetworkPolicy `default-deny` | The organization's namespace; no pods yet. |
 | `ws-demo` | ServiceAccount `iron-proxy`, Certificate `iron-proxy-ca`, ConfigMap `proxy-env-demo-config`, Deployment, Service, NetworkPolicy and HorizontalPodAutoscaler `proxy-env-demo`, NetworkPolicy `default-deny` | The workspace's proxy for `env_Demo01`: stock iron-proxy 0.59.0 pinned by digest, plus a reload watcher. |
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
-| `cert-manager` | Secret and ClusterIssuer `agentd-root-ca`; Certificate, Secret and ClusterIssuer `agentd-otel-ca` | The root CA issues each workspace's intermediate CA. The Collector CA, made in-cluster by cert-manager and apart from the root, issues only the Collector's serving certificate. |
-| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Certificate `otel-collector-tls` from `agentd-otel-ca`, NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
+| `cert-manager` | Secret and ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA. |
+| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Collector CA `agentd-otel-ca` (namespaced Issuer, apart from the agentd root), Certificate `otel-collector-tls` from it, NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
 | `kube-system` | metrics-server 0.9.1 | Feeds the HorizontalPodAutoscaler. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. Only proxy namespaces reach it. |
 | `upstream` | HTTPS echo server, Service `echo` on external IP `203.0.113.10` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. Only proxy namespaces reach it. |
@@ -97,7 +97,7 @@ The counts are delta sums, so a backend adds them up across both replicas.
 ## Not shown here
 
 - Object names are short (`ws-demo`, `proxy-env-demo`). The controller derives them from the ids, as the plan's section 4 sets out.
-- The controller puts a fingerprint of the management-key Secret and the intermediate CA Secret in the pod template's annotations, so a change to either rolls the proxy pods. These manifests carry no fingerprint, so after the CA restore check the running proxy keeps signing with the old intermediate, which still chains to the root.
+- The controller puts a fingerprint of the management-key Secret, the intermediate CA Secret and the `otel-ca` ConfigMap in the pod template's annotations, so a change to any of them rolls the proxy pods. It also copies the Collector CA certificate into every `otel-ca` ConfigMap when cert-manager renews it, within the year before the old copy expires. These manifests carry no fingerprint, so after the CA restore check the running proxy keeps signing with the old intermediate, which still chains to the root.
 - AWS itself: EKS Pod Identity and the tag-based IAM rule, External Secrets filling the root CA Secret from Secrets Manager, and KMS. The PR that adds the deploy chart proves them in a real AWS account.
 
 ## Stand-ins

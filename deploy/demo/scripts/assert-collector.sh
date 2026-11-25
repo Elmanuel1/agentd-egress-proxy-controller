@@ -24,7 +24,7 @@ check "the Collector refuses plain HTTP from the proxy (TLS only)" plain_http_re
 
 log "the proxies trust the Collector CA for OTLP, never the agentd root"
 pem_of_secret() { kubectl -n "$1" get secret "$2" -o jsonpath='{.data.tls\.crt}' | base64 -d >"${work}/$3"; }
-pem_of_secret cert-manager agentd-otel-ca otlp-ca.crt
+pem_of_secret observability agentd-otel-ca otlp-ca.crt
 pem_of_secret observability otel-collector-tls otlp-server.crt
 pem_of_secret ws-demo iron-proxy-ca otlp-intermediate.crt
 kubectl -n sandboxes get configmap agentd-root-ca -o jsonpath='{.data.ca\.crt}' >"${work}/otlp-root.crt"

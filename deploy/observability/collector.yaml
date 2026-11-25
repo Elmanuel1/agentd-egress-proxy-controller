@@ -39,7 +39,7 @@ spec:
     - digital signature
   issuerRef:
     group: cert-manager.io
-    kind: ClusterIssuer
+    kind: Issuer
     name: agentd-otel-ca
 ---
 apiVersion: v1

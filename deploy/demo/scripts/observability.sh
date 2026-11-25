@@ -14,7 +14,7 @@ kubectl -n observability create configmap otel-backend \
   --from-literal=endpoint=otel-backend.otel-backend.svc.cluster.local:4317 \
   --from-literal=ca.crt="$(kubectl -n otel-backend get secret otel-backend-tls -o jsonpath='{.data.ca\.crt}' | base64 -d)"
 kubectl apply -k "${DEMO_DIR}/test/observability"
-kubectl -n cert-manager wait certificate/agentd-otel-ca --for=condition=Ready --timeout=120s
-kubectl wait clusterissuer/agentd-otel-ca --for=condition=Ready --timeout=60s
+kubectl -n observability wait certificate/agentd-otel-ca --for=condition=Ready --timeout=120s
+kubectl -n observability wait issuer/agentd-otel-ca --for=condition=Ready --timeout=60s
 kubectl -n observability wait certificate/otel-collector-tls --for=condition=Ready --timeout=120s
 kubectl -n observability rollout status deploy/otel-collector --timeout=180s

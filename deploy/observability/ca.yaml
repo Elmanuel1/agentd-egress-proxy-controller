@@ -1,15 +1,21 @@
 # The Collector's own CA, apart from the agentd root. The agentd root's
 # workspace intermediates sit in every proxy pod, so they must not be able to
 # sign a certificate the proxies accept for the Collector: proxies trust this
-# CA alone for OTLP, and it issues only the Collector's serving certificate.
-# cert-manager makes it in-cluster; its key stays in Secret
-# cert-manager/agentd-otel-ca. Renewal keeps the key (rotationPolicy: Never),
-# so the copies proxies hold stay valid; a new key means re-copying it to every
-# workspace namespace before the Collector's certificate is reissued.
+# CA alone for OTLP. Its issuers are namespaced, so only a Certificate in
+# `observability` can use it; that namespace holds only the Collector's.
+# cert-manager makes the CA in-cluster; its key stays in Secret
+# observability/agentd-otel-ca.
+# Renewal: cert-manager renews the CA certificate 8760h before it expires,
+# keeping the key. The copy in each workspace's ConfigMap otel-ca is the old
+# certificate and stops working at its own expiry, and the proxies read it
+# only at startup. So within that year the controller copies the renewed
+# certificate into every otel-ca ConfigMap, and the ConfigMap's fingerprint on
+# the pod template rolls the proxies.
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: agentd-otel-bootstrap
+  namespace: observability
 spec:
   selfSigned: {}
 ---
@@ -17,7 +23,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: agentd-otel-ca
-  namespace: cert-manager
+  namespace: observability
 spec:
   isCA: true
   commonName: agentd OTLP CA
@@ -34,13 +40,14 @@ spec:
     - digital signature
   issuerRef:
     group: cert-manager.io
-    kind: ClusterIssuer
+    kind: Issuer
     name: agentd-otel-bootstrap
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: agentd-otel-ca
+  namespace: observability
 spec:
   ca:
     secretName: agentd-otel-ca
