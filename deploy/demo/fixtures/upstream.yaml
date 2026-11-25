@@ -2,9 +2,9 @@
 # and the SHA-256 of each request header value it received, as JSON, so the
 # test can see what the proxy forwarded while no credential value travels back
 # to the sandbox. CoreDNS (scripts/fixtures.sh) resolves its four names to the
-# Service's external IP 203.0.113.10 (TEST-NET-3), so the proxy dials a public
-# address and runs the production deny list unchanged; kube-proxy forwards
-# 443 and 80 to the pod.
+# Service's external IP 203.0.113.10 (TEST-NET-3), an address the deny list
+# allows, so the proxy runs the production deny list unchanged; kube-proxy
+# forwards 443 and 80 to the pod, which the test overlay's egress rule admits.
 #   api.upstream.test      on the allowlist; the credential's host
 #   other.upstream.test    on the allowlist; not the credential's host
 #   blocked.upstream.test  not on the allowlist

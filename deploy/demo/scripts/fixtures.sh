@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test fixtures that stand in for things outside the cluster: moto for
-# Secrets Manager, a fake HTTPS upstream on a public test address, and a DNS
+# Secrets Manager, a fake HTTPS upstream on a TEST-NET-3 address, and a DNS
 # name that resolves to the cloud metadata address.
 source "$(dirname "$0")/lib.sh"
 
