@@ -39,8 +39,8 @@ deploy/demo/down.sh
 | `org-demo` | NetworkPolicy `default-deny` | The organization's namespace; no pods yet. |
 | `ws-demo` | ServiceAccount `iron-proxy`, Certificate `iron-proxy-ca`, ConfigMap `proxy-env-demo-config`, Deployment, Service, NetworkPolicy and HorizontalPodAutoscaler `proxy-env-demo`, NetworkPolicy `default-deny` | The workspace's proxy for `env_Demo01`: stock iron-proxy 0.59.0 pinned by digest, plus a reload watcher. |
 | `sandboxes` | NetworkPolicy `sandbox-egress`, three sandbox pods | Sandbox stand-ins. Egress is denied except DNS and TCP 8080 to proxy namespaces. |
-| `cert-manager` | Secret `agentd-root-ca`, ClusterIssuer `agentd-root-ca` | The root CA. It issues each workspace's intermediate CA and the Collector's serving certificate. |
-| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Certificate `otel-collector-tls`, NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
+| `cert-manager` | Secret and ClusterIssuer `agentd-root-ca`; Certificate, Secret and ClusterIssuer `agentd-otel-ca` | The root CA issues each workspace's intermediate CA. The Collector CA, made in-cluster by cert-manager and apart from the root, issues only the Collector's serving certificate. |
+| `observability` | OpenTelemetry Collector (contrib 0.165.0, 2 replicas, PodDisruptionBudget), Certificate `otel-collector-tls` from `agentd-otel-ca`, NetworkPolicies | Receives the proxy's OTLP audit records over TLS on 4318, counts them into request metrics, and exports both to the backend. Only iron-proxy pods in proxy namespaces reach it. |
 | `kube-system` | metrics-server 0.9.1 | Feeds the HorizontalPodAutoscaler. |
 | `moto` | moto server 5.2.5 | Stands in for AWS Secrets Manager. Only proxy namespaces reach it. |
 | `upstream` | HTTPS echo server, Service `echo` on external IP `203.0.113.10` | Fake upstream that returns the SHA-256 of each header it received, so no credential value reaches a sandbox. Only proxy namespaces reach it. |
@@ -53,7 +53,7 @@ deploy/demo/down.sh
 3. The proxy terminates TLS with a leaf certificate signed by the workspace intermediate. The sandbox trusts only the root, and the proxy sends the intermediate with each leaf.
 4. On the credential's host, the `secrets` transform replaces the stand-in `agentd-ph-crd_Demo01` in any header with the value at `agentd/wrk_Demo01/vlt_Demo01/crd_Demo01` (JSON key `secret_value`) in Secrets Manager. On other hosts the stand-in passes through unchanged.
 5. The proxy dials the upstream. `upstream_deny_cidrs` refuses internal addresses, including `169.254.169.254`, even for an allowed name. The test hosts resolve to `203.0.113.10` (TEST-NET-3), a public address the production list allows; kube-proxy forwards it to the echo pod.
-6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the root. `OTEL_RESOURCE_ATTRIBUTES` puts `agentd.workspace_id` and `agentd.environment_id` on every record.
+6. The proxy sends one OTLP log record per request to the Collector over HTTPS, checking the Collector's certificate against the Collector CA alone (ConfigMap `otel-ca` in the workspace namespace). A workspace intermediate, whose key sits in every proxy pod of its workspace, cannot sign a certificate the proxies accept for the Collector. `OTEL_RESOURCE_ATTRIBUTES` puts `agentd.workspace_id` and `agentd.environment_id` on every record.
 
 ## Network rules
 
@@ -92,6 +92,7 @@ The counts are delta sums, so a backend adds them up across both replicas.
 - `egress_proxy_requests` counts exactly the requests the checks made: 1 allowed and swapped, 3 allowed and not swapped, 3 rejected by the allowlist, 1 failed dial. `egress_proxy_secret_failures` counts the 1 request whose secret could not be read.
 - The log records carry the workspace and environment ids, and the metrics carry neither. The credential value never reaches the Collector or its backend.
 - The Collector accepts only TLS: plain HTTP from the proxy gets `400`. A sandbox, and a pod with open egress that is not an iron-proxy pod, cannot connect to it.
+- The Collector's certificate chains to the Collector CA and not to the agentd root; the proxies' OTLP trust is exactly the Collector CA, and the workspace intermediate does not chain to it.
 
 ## Not shown here
 
@@ -106,7 +107,7 @@ The counts are delta sums, so a backend adds them up across both replicas.
 - The proxy trusts the fake upstream's CA through `SSL_CERT_FILE` (`test/workspace/`). In production it uses the image's system roots.
 - CoreDNS resolves the test hosts to `203.0.113.10` and `metadata.demo.test` to `169.254.169.254` (`scripts/fixtures.sh`).
 - metrics-server runs with `--kubelet-insecure-tls`, because kind's kubelets serve self-signed certificates (`scripts/install-metrics-server.sh`).
-- The management key Secret is made by `scripts/proxy.sh`. In production the controller makes it.
+- The management key Secret, and ConfigMap `otel-ca` with the Collector CA certificate, are made by `scripts/proxy.sh`. In production the controller makes both in each workspace namespace.
 
 ## Reload watcher
 

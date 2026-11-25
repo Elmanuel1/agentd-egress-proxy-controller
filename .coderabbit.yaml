@@ -43,7 +43,8 @@ reviews:
         - Every namespace denies traffic by default; each workload gets only
           the ingress and egress it needs. The proxy reaches cluster DNS, the
           Collector, the EKS Pod Identity agent and public addresses only.
-        - The proxy sends OTLP to the Collector over TLS only.
+        - The proxy sends OTLP to the Collector over TLS only, trusting the
+          Collector CA (`agentd-otel-ca`) alone, never the agentd root.
         `deploy/demo/workspace/` and `deploy/observability/` are production
         shape and must hold no test-only setting. Test-only settings live in
         `deploy/demo/test/` overlays, and stand-ins (moto, the fake upstream,

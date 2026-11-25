@@ -40,7 +40,7 @@ spec:
   issuerRef:
     group: cert-manager.io
     kind: ClusterIssuer
-    name: agentd-root-ca
+    name: agentd-otel-ca
 ---
 apiVersion: v1
 kind: ConfigMap

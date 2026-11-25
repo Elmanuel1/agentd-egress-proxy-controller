@@ -10,6 +10,9 @@ OTHER="https://other.upstream.test/"
 BLOCKED="https://blocked.upstream.test/"
 MISSING="https://missing.upstream.test/"
 
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
 failures=0
 check() { # <name> <command...>
   local name=$1
@@ -120,8 +123,6 @@ old_serial="$(kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tl
 kubectl -n ws-demo delete secret iron-proxy-ca
 restored() { kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.key}' 2>/dev/null | grep -q .; }
 check "iron-proxy-ca Secret recreated within 60 s" retry 30 2 restored
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
 kubectl -n sandboxes get configmap agentd-root-ca -o jsonpath='{.data.ca\.crt}' >"${work}/root.crt"
 kubectl -n ws-demo get secret iron-proxy-ca -o jsonpath='{.data.tls\.crt}' | base64 -d >"${work}/intermediate.crt"
 check "restored intermediate is newly issued" \

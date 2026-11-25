@@ -1,0 +1,46 @@
+# The Collector's own CA, apart from the agentd root. The agentd root's
+# workspace intermediates sit in every proxy pod, so they must not be able to
+# sign a certificate the proxies accept for the Collector: proxies trust this
+# CA alone for OTLP, and it issues only the Collector's serving certificate.
+# cert-manager makes it in-cluster; its key stays in Secret
+# cert-manager/agentd-otel-ca. Renewal keeps the key (rotationPolicy: Never),
+# so the copies proxies hold stay valid; a new key means re-copying it to every
+# workspace namespace before the Collector's certificate is reissued.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: agentd-otel-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agentd-otel-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: agentd OTLP CA
+  secretName: agentd-otel-ca
+  duration: 43800h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  usages:
+    - cert sign
+    - crl sign
+    - digital signature
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: agentd-otel-bootstrap
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: agentd-otel-ca
+spec:
+  ca:
+    secretName: agentd-otel-ca

@@ -53,10 +53,10 @@ spec:
                   key: api-key
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: https://otel-collector.observability:4318
-            # The workspace CA Secret carries the root as ca.crt; the Collector's
-            # serving certificate is issued from the same root.
+            # The Collector CA only: a workspace intermediate cannot sign a
+            # certificate the proxy accepts for the Collector.
             - name: OTEL_EXPORTER_OTLP_CERTIFICATE
-              value: /etc/iron-proxy/ca/ca.crt
+              value: /etc/otel-ca/ca.crt
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: agentd.workspace_id=wrk_Demo01,agentd.environment_id=env_Demo01
           readinessProbe:
@@ -85,6 +85,9 @@ spec:
               readOnly: true
             - name: ca
               mountPath: /etc/iron-proxy/ca
+              readOnly: true
+            - name: otel-ca
+              mountPath: /etc/otel-ca
               readOnly: true
         # Stock configmap-reload cannot send the bearer key the management API
         # requires, so this is the same loop in the pinned iron-proxy image,
@@ -142,8 +145,11 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
-              - key: ca.crt
-                path: ca.crt
+        # The controller copies the Collector CA certificate into each workspace
+        # namespace as ConfigMap otel-ca.
+        - name: otel-ca
+          configMap:
+            name: otel-ca
 ---
 apiVersion: v1
 kind: Service

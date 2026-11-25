@@ -1,6 +1,6 @@
-# shellcheck shell=bash disable=SC2154 # real is set by assert.sh, which sources this file
+# shellcheck shell=bash disable=SC2154 # real and work are set by assert.sh, which sources this file
 # The OpenTelemetry Collector checks. Sourced by assert.sh, after the requests whose
-# counts they check; uses its check, via, no_connection and real. What the Collector
+# counts they check; uses its check, via, no_connection, real and work. What the Collector
 # exports is read from the test backend's stdout.
 
 via sandbox-labelled "http://otel-collector.observability.svc.cluster.local:4318/v1/logs" --noproxy '*'
@@ -21,6 +21,29 @@ plain_http_refused() {
   grep -q '400 Bad Request' <<<"$out"
 }
 check "the Collector refuses plain HTTP from the proxy (TLS only)" plain_http_refused
+
+log "the proxies trust the Collector CA for OTLP, never the agentd root"
+pem_of_secret() { kubectl -n "$1" get secret "$2" -o jsonpath='{.data.tls\.crt}' | base64 -d >"${work}/$3"; }
+pem_of_secret cert-manager agentd-otel-ca otlp-ca.crt
+pem_of_secret observability otel-collector-tls otlp-server.crt
+pem_of_secret ws-demo iron-proxy-ca otlp-intermediate.crt
+kubectl -n sandboxes get configmap agentd-root-ca -o jsonpath='{.data.ca\.crt}' >"${work}/otlp-root.crt"
+kubectl -n ws-demo get configmap otel-ca -o jsonpath='{.data.ca\.crt}' >"${work}/otlp-trusted.crt"
+# not_signed_by <ca> <cert>: both parse as certificates, and the cert does not chain to the CA.
+not_signed_by() {
+  openssl x509 -noout -in "${work}/$1" && openssl x509 -noout -in "${work}/$2" \
+    && ! openssl verify -CAfile "${work}/$1" "${work}/$2" >/dev/null 2>&1
+}
+check "the Collector's certificate chains to the Collector CA" \
+  openssl verify -CAfile "${work}/otlp-ca.crt" "${work}/otlp-server.crt"
+check "the Collector's certificate does not chain to the agentd root" not_signed_by otlp-root.crt otlp-server.crt
+fingerprint() { openssl x509 -noout -fingerprint -sha256 -in "${work}/$1"; }
+same_cert() { [[ -n $(fingerprint "$1") && $(fingerprint "$1") == "$(fingerprint "$2")" ]]; }
+check "the proxies' OTLP trust (ConfigMap otel-ca) is the Collector CA" same_cert otlp-ca.crt otlp-trusted.crt
+check "control: the workspace intermediate chains to the agentd root" \
+  openssl verify -CAfile "${work}/otlp-root.crt" "${work}/otlp-intermediate.crt"
+check "nothing the workspace intermediate signs chains to the proxies' OTLP trust" \
+  not_signed_by otlp-trusted.crt otlp-intermediate.crt
 
 log "the Collector counts the requests above from the proxy's OTLP audit records"
 collector_out() { kubectl -n otel-backend logs deploy/otel-backend | grep '^{"resource' || true; }

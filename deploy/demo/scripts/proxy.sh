@@ -12,6 +12,10 @@ key="$(openssl rand -hex 32)"
 unset key
 kubectl -n ws-demo create secret generic iron-proxy-management --from-file=api-key="${key_dir}/api-key"
 
+log "Collector CA certificate (the controller copies it into each workspace namespace)"
+kubectl -n ws-demo create configmap otel-ca \
+  --from-literal=ca.crt="$(kubectl -n cert-manager get secret agentd-otel-ca -o jsonpath='{.data.tls\.crt}' | base64 -d)"
+
 log "the controller's manifests, with the test overlay's stand-ins"
 kubectl apply -k "${DEMO_DIR}/test/workspace"
 kubectl -n ws-demo wait certificate/iron-proxy-ca --for=condition=Ready --timeout=120s
