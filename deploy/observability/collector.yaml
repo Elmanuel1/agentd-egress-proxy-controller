@@ -110,7 +110,8 @@ data:
           - delete_matching_keys(log.attributes, "^(agentd|k8s)[.]")
       # Matches on the connection's source address only, never on attributes
       # the sender supplied. A replica starts only once its pod cache has
-      # synced, so no record leaves it without the ids.
+      # synced. A record from a pod the cache has not seen yet, such as one the
+      # HPA just added, leaves without the ids rather than with forged ones.
       k8s_attributes:
         auth_type: serviceAccount
         wait_for_metadata: true
